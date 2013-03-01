@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mx:Canvas xmlns:mx="http://www.adobe.com/2006/mxml" horizontalScrollPolicy="off" verticalScrollPolicy="off" fontSize="12" width="100%" height="100%">
+	<mx:Script>
+		<![CDATA[
+			public function changeLabel(str:String):String
+			{
+				/*
+				if(this.parentDocument.menuList.selectedIndex == data.index){
+					text1.setStyle('color','#FEFF65');
+				}
+				else{
+					text1.setStyle('color','#000000');
+				}
+				*/
+				return str.split("").join("<br/>");
+			}
+		
+		]]>
+	</mx:Script>
+	<mx:Text htmlText="{changeLabel(data.label)}" id="text1" selectable="false" styleName="listViewText" verticalCenter="0" />
+</mx:Canvas>

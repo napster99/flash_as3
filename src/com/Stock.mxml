@@ -1,0 +1,405 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mx:HBox xmlns:mx="http://www.adobe.com/2006/mxml" width="100%" height="100%" xmlns:com="com.*" implements="com.IDoKey" >
+<mx:Script>
+	<![CDATA[
+		import vo.StockVO;
+		import flash.utils.setTimeout;
+		import mx.collections.ArrayCollection;
+		import events.KlineEvent;
+		import events.StockEvent;
+		import events.MinuteEvent;
+		import utility.App;
+		import vo.TradeVO;
+		import vo.PKStyleVO;
+		import flashq.server.tools.DataTable;
+		import vo.PanKouVO;
+		import flashq.server.IHqServer;
+		import flashq.server.events.ServerEvent;
+		
+		private var hqServer:IHqServer;
+		private var _code:String="600000";
+		[Bindable] private var _pankou:PanKouVO=new PanKouVO();
+        [Bindable] private var _pkstyle:PKStyleVO= new PKStyleVO();
+		[Bindable] private var tradeData:ArrayCollection = new ArrayCollection;
+		public var tradeLength:int = 8; //股票报价列表的长度
+		private var _fix:int=2;
+		private var _height:Number;
+		private var _width:Number;
+		[Bindable]
+		private var _rowHeight:Number = 23;
+		
+		public function setKlineIndex(i:int):void{
+			kline1.setKlineIndex(i);
+		}
+        
+		public function init(server:IHqServer,height:Number,width:Number,code:String='1A0001'):void
+		{
+			hqServer = server;
+			minute1.init(hqServer);
+			kline1.init(hqServer, code);
+			
+			hqServer.addEventListener(ServerEvent.PANKOU_READY,pankouHandler);
+			hqServer.addEventListener(ServerEvent.PANKOUINDEX_READY,pankouHandler);
+			hqServer.addEventListener(ServerEvent.TRADE_READY,tradeHandler);
+			hqServer.addEventListener(ServerEvent.TRADE_PUSH_READY,tradepushHandler);
+			
+			hqServer.addEventListener(ServerEvent.TRADELIST_READY,tradelistHandler);
+			hqServer.addEventListener(ServerEvent.TRADELIST_PUSH_READY,tradelistpushHandler);
+			
+//			minute1.addEventListener(MinuteEvent.MinuteDBClick,minutedbClickHandler);
+//			kline1.addEventListener(KlineEvent.KLineDBClick,klinedbclickHandler);
+			
+			_width = width;//能显示的宽度 
+			_height = height;//.....高度
+			tradeLength = int((_height-mairu.height-maichu.height)/_rowHeight);
+			_code=code;
+			switchView(viewstack1.selectedIndex,_code);
+		}
+		
+		private function klinedbclickHandler(event:KlineEvent):void
+		{
+			var evt:StockEvent=new StockEvent(StockEvent.ViewSwitch);
+			evt.viewidx = 2;
+			dispatchEvent(evt);
+		}
+		
+		private function minutedbClickHandler(event:MinuteEvent):void
+		{
+			//发送界面切换消息
+			var evt:StockEvent=new StockEvent(StockEvent.ViewSwitch);
+			evt.viewidx = 1;
+			dispatchEvent(evt);
+		}
+		
+		private function pankouHandler(event:ServerEvent):void
+		{
+			initPanKou(event.content);
+			initStyle();
+		}
+		
+		public function doKey(keyCode:int):void
+		{
+			if(viewstack1.selectedIndex == 0)
+			{
+				minute1.doKey(keyCode);
+			}
+			else if(viewstack1.selectedIndex == 1)
+			{
+				kline1.doKey(keyCode);
+			}
+		}
+		
+		private function tradelistHandler(event:ServerEvent):void
+		{
+			tradeHandler(event);
+		}
+		
+		private function tradelistpushHandler(event:ServerEvent):void
+		{
+			tradepushHandler(event);
+		}
+		
+		private function tradeHandler(event:ServerEvent):void
+		{
+			tradeData.removeAll();
+			
+			var dt:DataTable = event.content.table;
+			var attr:Object = event.content.attr;
+			var idx:int = dt.length - tradeLength;
+			if(idx <0) idx=0;
+			var isIndex:Boolean = App.isIndex(_code);
+			for(var i:int=idx;i<dt.length;i++)
+			{
+				var flag:Boolean ;
+				var volclass:int = int(dt.getValue(i,"VOLCLASS"));
+	    		if(volclass >= 4){
+			    	flag=true;
+			    }
+			    else if(volclass < 0 && !isIndex){
+			    	continue;
+			    }
+			    else{
+			    	flag=false;
+			    }
+			    if(isIndex) flag = true; //指数没有成交量分类
+				var tvo:TradeVO=TradeVO.create(dt.getString(i,"DATETIME"),dt.getString(i,"NEW"),dt.getString(i,"NEWVOL"),flag);
+				tradeData.addItem(tvo);
+			}
+		}
+		
+		private function tradepushHandler(event:ServerEvent):void
+		{
+			var dt:DataTable = event.content.table;
+			var attr:Object = event.content.attr;
+			for(var i:int=idx;i<dt.length;i++)
+			{
+				var ttime:String = dt.getString(i,"DATETIME");
+				var flag:Boolean;
+				var newvol:int = int(dt.getValue(i,"VOLCLASS"));
+	    		if(newvol >= 4){
+			    	flag=true;
+			    }
+			    else if(newvol < 0){
+			    	continue;
+			    }
+			    else{
+			    	flag=false;
+			    }
+				var idx:int = timeExist(tradeData,ttime);
+				var tvo:TradeVO=TradeVO.create(dt.getString(i,"DATETIME"),dt.getString(i,"NEW"),dt.getString(i,"NEWVOL"),flag);
+				if(idx>-1)
+				{
+					tradeData.setItemAt(tvo,idx);
+				}
+				else
+				{
+					if(tradeData.length > 0)tradeData.removeItemAt(0);
+					tradeData.addItem(tvo);
+				}
+			}
+		}
+		
+		private function timeExist(list:ArrayCollection,time:String):int
+		{
+			var tmpitem:TradeVO;
+			for(var i:int=list.length-1;i>=0;i--)
+			{
+				tmpitem = list.getItemAt(i) as TradeVO;
+				if(tmpitem.tradeTime == time)
+				{
+					return i;
+				}
+			}
+			return -1;
+		}
+		
+		private function initStyle():void
+		{
+			var color1:* = getcolor(".pkstyle1");
+			var color2:* = getcolor(".pkstyle2");
+			
+			_pkstyle.chengjiao = (_pankou.pre > _pankou.buyprice)? color1:color2;
+			_pkstyle.junjia    = (_pankou.pre > _pankou.junjia)   ? color1:color2;
+			_pkstyle.kaipan    = (_pankou.pre > _pankou.open)   ? color1:color2;
+			_pkstyle.zuigao    = (_pankou.pre > _pankou.high)   ? color1:color2;
+			_pkstyle.zuidi     = (_pankou.pre > _pankou.low)    ? color1:color2;
+			_pkstyle.sp1       = (_pankou.pre > Number(_pankou.sp1))  ? color1:color2;
+			_pkstyle.sp2       = (_pankou.pre > Number(_pankou.sp2))  ? color1:color2;
+			_pkstyle.sp3       = (_pankou.pre > Number(_pankou.sp3))  ? color1:color2;
+			_pkstyle.sp4       = (_pankou.pre > Number(_pankou.sp4))  ? color1:color2;
+			_pkstyle.sp5       = (_pankou.pre > Number(_pankou.sp5))  ? color1:color2;
+			_pkstyle.bp1       = (_pankou.pre > Number(_pankou.bp1))  ? color1:color2;
+			_pkstyle.bp2       = (_pankou.pre > Number(_pankou.bp2))  ? color1:color2;
+			_pkstyle.bp3       = (_pankou.pre > Number(_pankou.bp3))  ? color1:color2;
+			_pkstyle.bp4       = (_pankou.pre > Number(_pankou.bp4))  ? color1:color2;
+			_pkstyle.bp5       = (_pankou.pre > Number(_pankou.bp5))  ? color1:color2;
+		}
+		
+		private function initPanKou(data:Object):void
+		{
+			var dt:DataTable=data.table;
+			_pankou.buyprice = dt.getNumber(0,"VOL");
+			_pankou.bp1 = dt.getNumber(0,"BUYPRICE1");_pankou.bp2 = dt.getNumber(0,"BUYPRICE2");_pankou.bp3 = dt.getNumber(0,"BUYPRICE3");_pankou.bp4 = dt.getNumber(0,"BUYPRICE4");_pankou.bp5 = dt.getNumber(0,"BUYPRICE5");
+			_pankou.bc1 = dt.getNumber(0,"BUYCOUNT1");_pankou.bc2 = dt.getNumber(0,"BUYCOUNT2");_pankou.bc3 = dt.getNumber(0,"BUYCOUNT3");_pankou.bc4 = dt.getNumber(0,"BUYCOUNT4");_pankou.bc5 = dt.getNumber(0,"BUYCOUNT5");
+			_pankou.sp1 = dt.getNumber(0,"SELLPRICE1");_pankou.sp2 = dt.getNumber(0,"SELLPRICE2");_pankou.sp3 = dt.getNumber(0,"SELLPRICE3");_pankou.sp4 = dt.getNumber(0,"SELLPRICE4");_pankou.sp5 = dt.getNumber(0,"SELLPRICE5");
+			_pankou.sc1 = dt.getNumber(0,"SELLCOUNT1");_pankou.sc2 = dt.getNumber(0,"SELLCOUNT2");_pankou.sc3 = dt.getNumber(0,"SELLCOUNT3");_pankou.sc4 = dt.getNumber(0,"SELLCOUNT4");_pankou.sc5 = dt.getNumber(0,"SELLCOUNT5");
+			_pankou.pre = dt.getNumber(0,"PRE");
+			_pankou.open = dt.getNumber(0,"OPEN");
+			_pankou.high = dt.getNumber(0,"HIGH");
+			_pankou.low = dt.getNumber(0,"LOW");
+			_pankou.buyprice = dt.getNumber(0,"NEW");
+			_pankou.vol = dt.getString(0,"VOL");
+			_pankou.money = dt.getString(0,"MONEY");
+			_pankou.newvol = dt.getNumber(0,"NEWVOL");
+			_pankou.upperlim = dt.getNumber(0,"UPPERLIM");
+			_pankou.lowerlim = dt.getNumber(0,"LOWERLIM");
+			_pankou.zhangfu = dt.getNumber(0,"ZHANGDIEFU");
+			_pankou.zhangdie = dt.getNumber(0,"ZHANGDIE");
+			_pankou.pre = dt.getNumber(0,"PRE");
+			_pankou.junjia = _pankou.pre;
+			
+			callPankou(); //调用JS
+		}
+
+		private function callPankou():void
+		{
+			var arr:Array = [];
+			arr.push(_pankou.buyprice.toString());
+			arr.push(_pankou.newvol.toString());
+			arr.push(_pankou.open.toString());
+			arr.push(_pankou.high.toString());
+			arr.push(_pankou.zhangdie.toString());
+			arr.push(_pankou.upperlim.toString());
+			arr.push(_pankou.junjia.toString());
+			arr.push(_pankou.vol.toString());
+			arr.push(_pankou.money.toString());
+			arr.push(_pankou.low.toString());
+			arr.push(_pankou.zhangfu.toString());
+			arr.push(_pankou.lowerlim.toString());
+			ggym.setPanKou(arr.join(","),_code); //成交,现手,开盘,最高,涨跌,涨停,均价,总手,金额,最低,涨幅,涨停
+		}
+		
+		public function switchView(index:int, code:String):void
+		{
+			if(code=="") code = _code;
+			viewstack1.selectedIndex =index;
+			_code=code;
+			if(index == 0)
+				minute1.switchView(_code);
+			else if(index == 1)
+				kline1.switchView(_code);
+				
+			_pankou=new PanKouVO(); //指数分时没有买卖信息，重置该信息
+			tradeData.removeAll();
+			if(App.isIndex(code)) //如果是指数，需要主动请求trace信息
+				setTimeout(requestTrace,100);
+				
+			var stockinfo:StockVO=App.getStock(code);
+			_fix = App.getFix(stockinfo);
+		}
+		
+		private function requestTrace():void
+		{
+			hqServer.requestTraceList({code:_code,begin:0,count:tradeLength});
+		}
+		
+	   private function pankouLabel(str:*):String{
+			return (!Number(str) || str == null || str == '')? "--" : Number(str).toFixed(_fix);
+		}
+		
+       private function lightTrade(price:Number):void{
+        	/*
+        	if(price != null && int(price) != 0){
+        		ExternalInterface.call("sdxd",stockid,'light',price);
+        	}
+        	*/
+       }
+       private function lightTrade_buy(price:Number):void{
+       		/*
+        	if(price != null && int(price) != 0){
+        		ExternalInterface.call("sdxd",_code,'sell',price.toString());
+        	}
+        	*/
+       }
+       private function lightTrade_sell(price:Number):void{
+       		/*
+        	if(price != null && int(price) != 0){
+        		ExternalInterface.call("sdxd",_code,'buy',price.toString());
+        	}
+        	*/
+       }
+       private function MMmouseover(obj:Object):void{
+       		obj.setStyle("borderStyle","solid");
+       		obj.setStyle("borderColor","#ff0000");
+       }
+        
+       private function MMmouseout(obj:Object):void{
+       		obj.setStyle("borderStyle","none");
+       }
+       
+       [Bindable(event="styleChanged")]
+	   	private function getcolor(name:String):*
+		{
+			return StyleManager.getStyleDeclaration(name).getStyle('color');
+		}
+		public function resetStyle():void
+		{
+			dispatchEvent(new Event("styleChanged"));
+			minute1.resetStyle();
+			kline1.resetStyle();
+		}
+	]]>
+</mx:Script>
+	<mx:VBox width="100%" height="100%">
+		<mx:ViewStack id="viewstack1" width="100%" height="100%" creationPolicy="all">
+			<com:Minute id="minute1" width="100%" height="100%"></com:Minute>
+			<com:KLine id="kline1" width="100%" height="100%"></com:KLine>
+		</mx:ViewStack>
+		<mx:VBox width="1" height="1" paddingLeft="8" verticalScrollPolicy="off" horizontalScrollPolicy="off">
+			<mx:HBox>
+				<mx:Label text="成交" width="30" height="20" styleName="stockbuysell"/><mx:Text htmlText="{pankouLabel(_pankou.buyprice)}" width="45" height="20" color="{_pkstyle.chengjiao}" textAlign="left"/>
+				<mx:Label text="现手" width="30" height="20" styleName="stockbuysell"/><mx:Text htmlText="{_pankou.newvol}" width="50" height="20"  textAlign="left"/>
+				<mx:Label text="开盘" width="30" height="20" styleName="stockbuysell"/><mx:Text htmlText="{pankouLabel(_pankou.open)}" width="56" height="20" color="{_pkstyle.kaipan}" textAlign="left"/>
+				<mx:Label text="最高" width="30" height="20" styleName="stockbuysell"/><mx:Text htmlText="{pankouLabel(_pankou.high)}" width="45" height="20" color="{_pkstyle.zuigao}" textAlign="left"/>
+				<mx:Label text="涨跌" width="30" height="20" styleName="stockbuysell"/><mx:Text htmlText="{pankouLabel(_pankou.zhangdie)}" width="55" height="20"  color="{_pkstyle.chengjiao}"  textAlign="left"/>
+				<mx:Text text="涨停" fontSize="12" width="30" styleName="stockbuysell"/><mx:Text text="{_pankou.upperlim}" width="56" height="20" textAlign="left" color="#ff0000"/>	
+			</mx:HBox>
+			<mx:HBox>
+				<mx:Label text="均价" width="30" height="20" styleName="stockbuysell"/><mx:Text htmlText="{pankouLabel(_pankou.junjia)}" width="45" height="20" color="{_pkstyle.junjia}" textAlign="left"/>			
+				<mx:Label text="总手" width="30" height="20" styleName="stockbuysell"/><mx:Text htmlText="{_pankou.vol}" width="50" height="20"  textAlign="left"/>
+				<mx:Label text="金额" width="30" height="20" styleName="stockbuysell"/><mx:Text htmlText="{_pankou.money}" width="56" height="20"  textAlign="left"/>	
+				<mx:Label text="最低" width="30" height="20" styleName="stockbuysell"/><mx:Text htmlText="{pankouLabel(_pankou.low)}" width="45" height="20" color="{_pkstyle.zuidi}" textAlign="left"/>
+				<mx:Label text="涨幅" width="30" height="20" styleName="stockbuysell"/><mx:Text htmlText="{pankouLabel(_pankou.zhangfu)}%" width="55" height="20"  color="{_pkstyle.chengjiao}"  textAlign="left"/>
+				<mx:Text text="跌停" fontSize="12" width="30"  styleName="stockbuysell"/><mx:Text text="{_pankou.lowerlim}" width="56" height="20" color="#42790B" textAlign="left"/>
+			</mx:HBox>
+		</mx:VBox>
+	</mx:VBox>
+	<mx:VBox width="1" height="1" verticalGap="0" verticalScrollPolicy="off" horizontalScrollPolicy="off">
+		<mx:Canvas width="145" height="105" styleName="stocksell" id="mairu" fontSize="12" horizontalScrollPolicy="off" verticalScrollPolicy="off" backgroundColor="#FFFFFF" borderStyle="solid" borderThickness="1" borderColor="#8A8A8A">
+			<mx:Label x="5" y="1" text="卖五" styleName="stockbuysell"/>
+			<mx:Label x="5" y="22" text="卖四" styleName="stockbuysell" />
+			<mx:Label x="5" y="43" text="卖三" styleName="stockbuysell" />
+			<mx:Label x="5" y="64" text="卖二" styleName="stockbuysell" />
+			<mx:Label x="5" y="83" text="卖一" styleName="stockbuysell" />
+			
+			<mx:HBox x="40" y="83" width="103" height="20" mouseOver="MMmouseover(sp1)" mouseOut="MMmouseout(sp1)" id="sp1"  horizontalGap="2">
+				<mx:Label id="sp1_p" text="{pankouLabel(_pankou.sp1)}" width="52" height="20" fontSize="11" color="{_pkstyle.sp1}"/>
+				<mx:Label text="{_pankou.sc1}" width="47" height="20" textAlign="right" fontSize="11" color="{_pkstyle.sp1}"/>
+			</mx:HBox>
+			<mx:HBox x="40" y="64" width="103" height="20" mouseOver="MMmouseover(sp2)" mouseOut="MMmouseout(sp2)" id="sp2"  horizontalGap="2">
+				<mx:Label id="sp2_p" text="{pankouLabel(_pankou.sp2)}" width="52" height="20" fontSize="11" color="{_pkstyle.sp2}"/>
+				<mx:Label text="{_pankou.sc2}" width="47" height="20" textAlign="right" fontSize="11" color="{_pkstyle.sp2}"/>
+			</mx:HBox>
+			<mx:HBox x="40" y="43" width="103" height="22" mouseOver="MMmouseover(sp3)" mouseOut="MMmouseout(sp3)" id="sp3"  horizontalGap="2">
+				<mx:Label id="sp3_p" text="{pankouLabel(_pankou.sp3)}" width="52" height="20" fontSize="11" color="{_pkstyle.sp3}"/>
+				<mx:Label text="{_pankou.sc3}" width="47" height="20" textAlign="right" fontSize="11" color="{_pkstyle.sp3}"/>
+			</mx:HBox>
+			<mx:HBox x="40" y="22" width="103" height="22" mouseOver="MMmouseover(sp4)" mouseOut="MMmouseout(sp4)" id="sp4" horizontalGap="2">
+				<mx:Label id="sp4_p" text="{pankouLabel(_pankou.sp4)}" width="52" height="20" fontSize="11" color="{_pkstyle.sp4}"/>
+				<mx:Label text="{_pankou.sc4}" width="47" height="20" textAlign="right" fontSize="11" color="{_pkstyle.sp4}"/>
+			</mx:HBox>
+			<mx:HBox x="40" y="1" width="103" height="22" mouseOver="MMmouseover(sp5)" mouseOut="MMmouseout(sp5)" id="sp5"  horizontalGap="2">
+				<mx:Label id="sp5_p" text="{pankouLabel(_pankou.sp5)}" width="52" height="20" fontSize="11" color="{_pkstyle.sp5}"/>
+				<mx:Label text="{_pankou.sc5}" width="47" height="20" textAlign="right" fontSize="11" color="{_pkstyle.sp5}"/>
+			</mx:HBox>
+		</mx:Canvas>
+		<mx:Canvas width="145" height="22" fontSize="12" horizontalScrollPolicy="off" verticalScrollPolicy="off" borderStyle="solid" borderThickness="1" borderColor="#8A8A8A" borderSides="left right">
+			<mx:Label x="5" y="1" text="现价" styleName="stockbuysell" fontWeight="bold"/>
+			<mx:HBox x="40" y="1" width="103" height="22" id="buyprice"  horizontalGap="2">
+				<mx:Label text="{pankouLabel(_pankou.buyprice)}" height="20" fontSize="11" color="{_pkstyle.chengjiao}" fontWeight="bold"/>
+			</mx:HBox>
+		</mx:Canvas>
+		<mx:Canvas width="145" height="101" styleName="stockbuy" fontSize="12" id="maichu" horizontalScrollPolicy="off" verticalScrollPolicy="off" backgroundColor="#FFFFFF" borderStyle="solid" borderThickness="1" borderColor="#8A8A8A">
+			<mx:Label x="5" y="1" text="买一" styleName="stockbuysell"/>
+			<mx:Label x="5" y="20" text="买二" styleName="stockbuysell"/>
+			<mx:Label x="5" y="39" text="买三" styleName="stockbuysell"/>
+			<mx:Label x="5" y="58" text="买四" styleName="stockbuysell"/>
+			<mx:Label x="5" y="79" text="买五" styleName="stockbuysell"/>
+			
+			<mx:HBox x="40" y="1" width="103" height="20" mouseOver="MMmouseover(bp1)" mouseOut="MMmouseout(bp1)" id="bp1"  horizontalGap="2">
+				<mx:Label id="bp1_p" text="{pankouLabel(_pankou.bp1)}" width="52" height="20" fontSize="11" color="{_pkstyle.bp1}"/>
+				<mx:Label text="{_pankou.bc1}" width="47" height="20" textAlign="right" fontSize="11" color="{_pkstyle.bp1}"/>
+			</mx:HBox>
+			<mx:HBox x="40" y="20" width="103" height="20" mouseOver="MMmouseover(bp2)" mouseOut="MMmouseout(bp2)" id="bp2" horizontalGap="2">
+				<mx:Label id="bp2_p" text="{pankouLabel(_pankou.bp2)}" width="52" height="20" fontSize="11" color="{_pkstyle.bp2}"/>
+				<mx:Label text="{_pankou.bc2}" width="47" height="20" textAlign="right" fontSize="11" color="{_pkstyle.bp2}"/>
+			</mx:HBox>
+			<mx:HBox x="40" y="39" width="103" height="20" mouseOver="MMmouseover(bp3)" mouseOut="MMmouseout(bp3)" id="bp3" horizontalGap="2">
+				<mx:Label id="bp3_p" text="{pankouLabel(_pankou.bp3)}" width="52" height="20" fontSize="11" color="{_pkstyle.bp3}"/>
+				<mx:Label text="{_pankou.bc3}" width="47" height="20" textAlign="right" fontSize="11" color="{_pkstyle.bp3}"/>
+			</mx:HBox>
+			<mx:HBox x="40" y="58" width="103" height="20" mouseOver="MMmouseover(bp4)" mouseOut="MMmouseout(bp4)" id="bp4"  horizontalGap="2">
+				<mx:Label id="bp4_p" text="{pankouLabel(_pankou.bp4)}" width="52" height="20" fontSize="11" color="{_pkstyle.bp4}"/>
+				<mx:Label text="{_pankou.bc4}" width="47" height="20" textAlign="right" fontSize="11" color="{_pkstyle.bp4}"/>
+			</mx:HBox>
+			<mx:HBox x="40" y="77" width="103" height="20" mouseOver="MMmouseover(bp5)" mouseOut="MMmouseout(bp5)" id="bp5"  horizontalGap="2">
+				<mx:Label id="bp5_p" text="{pankouLabel(_pankou.bp5)}" width="52" height="20" fontSize="11" color="{_pkstyle.bp5}"/>
+				<mx:Label text="{_pankou.bc5}" width="47" height="20" textAlign="right" fontSize="11" color="{_pkstyle.bp5}"/>
+			</mx:HBox>
+		</mx:Canvas>
+		<mx:Canvas width="145" height="145" fontSize="12" horizontalScrollPolicy="off" verticalScrollPolicy="off" borderStyle="solid" borderThickness="1" borderColor="#8A8A8A" borderSides="left right bottom">
+			<mx:Label x="5" y="1" text="逐笔" styleName="stockbuysell" fontWeight="bold"/>
+			<mx:List id="tradec" dataProvider="{tradeData}" height="100%" itemRenderer="com.TradeItem" width="143" variableRowHeight="true" borderStyle="none" verticalScrollPolicy="off" horizontalScrollPolicy="off" paddingRight="0" paddingLeft="0" paddingBottom="0" paddingTop="0" fontFamily="Verdana" right="0" styleName="tradec" rowHeight="{_rowHeight}" backgroundColor="#FFFFFF" y="20"></mx:List>
+		</mx:Canvas>
+	</mx:VBox>
+</mx:HBox>

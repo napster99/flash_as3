@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<chartClasses:DataTip xmlns:mx="http://www.adobe.com/2006/mxml" xmlns:chartClasses="mx.charts.chartClasses.*" show="_showHandler(event);" move="_showHandler(event);">
+	<mx:Script>
+		<![CDATA[
+			import flash.events.Event;
+			
+			private function _showHandler(event:Event):void{
+				var stageH:Number = stage.stageHeight;
+				var stageW:Number = stage.stageWidth;
+				this.x = Math.min(this.x, stageW-this.width);
+				this.y = Math.min(this.y, stageH-this.height);
+			}
+		]]>
+	</mx:Script>
+</chartClasses:DataTip>

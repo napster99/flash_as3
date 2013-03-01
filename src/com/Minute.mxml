@@ -1,0 +1,506 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mx:VBox xmlns:mx="http://www.adobe.com/2006/mxml" width="100%" height="100%" verticalGap="0" implements="com.IDoKey" horizontalScrollPolicy="off" verticalScrollPolicy="off" doubleClickEnabled="true" xmlns:com="com.*">
+<mx:Script>
+	<![CDATA[
+		import events.MinuteEvent;
+		
+		import flashq.server.IHqServer;
+		import flashq.server.events.ServerEvent;
+		import flashq.server.tools.DataTable;
+		
+		import mx.charts.HitData;
+		import mx.charts.chartClasses.IAxis;
+		import mx.charts.chartClasses.Series;
+		import mx.collections.ArrayCollection;
+		import mx.controls.VRule;
+		
+		import utility.App;
+		
+		import vo.MinuteListVO;
+		import vo.StockListVO;
+		import vo.StockVO;
+		
+		private var hqServer:IHqServer;
+		
+		[Bindable]
+		private var _xdata:ArrayCollection;
+		[Bindable]
+		private var _minuteMax:Number;
+		[Bindable]
+		private var _minuteMin:Number;
+		[Bindable]
+		private var _minuteInt:Number;
+		private var _ycount:int = 6;
+		
+		[Bindable]
+		private var _percentMax:Number;
+		[Bindable]
+		private var _percentMin:Number;
+		
+		private var _minute_Params:Object = {code:600000};
+		
+		[Bindable]
+		private var _minuteList:ArrayCollection=new ArrayCollection();
+		private var _pre:Number;//昨收
+		private var _fix:int=2;
+		private var pos:Number;
+		
+		/*
+		 * 为兼容指数分时，做了一些改动
+		 * 注意junjia既代表股票分时的均价，还代表指数分时的领先 
+		 */
+		
+		public function init(server:IHqServer):void
+		{
+			hqServer = server;
+			hqServer.addEventListener(ServerEvent.MINUTE_READY,minuteHandler);
+			hqServer.addEventListener(ServerEvent.MINUTE_PUSH_READY,minutePushHandler);
+			this.addEventListener(MouseEvent.DOUBLE_CLICK,dbclickHandler);
+			this.addEventListener(MouseEvent.MOUSE_MOVE,mouseDrawline);
+			initxdata();
+		}
+		
+     	public function mouseDrawline(e:MouseEvent):void
+        {	
+        	var p:Point = new Point(minuteLinechart.mouseX,minuteLinechart.mouseY);
+			var d:Array = minuteLinechart.localToData(p);
+			pos=getNumericChartValue(d[0],horAxis).numericValue;
+			if(isNaN(pos)) pos=0;
+			drawLine(pos);
+        }
+        
+        		//分时图画线
+		public function drawLine(pos:Number):void
+		{	/*
+			if(pos >= fschartdata.length){
+				return;
+			}
+			*/
+			//k线白线
+			linesCanvas.removeAllChildren();
+			linesCanvas1.removeAllChildren();
+			
+			var thePosition:Point = chartToScreen(pos, 0, horSeries);              
+			var theLine:VRule = VRule(linesCanvas.addChild(new VRule()));
+			theLine.x = thePosition.x;
+			theLine.y = 0;
+			theLine.height = linesCanvas.height;
+			
+			
+			//成交量白线
+			
+			var theLine1:VRule = VRule(linesCanvas1.addChild(new VRule()));
+			theLine1.x = thePosition.x;
+			theLine1.y = 0;
+			theLine1.height = linesCanvas1.height;
+
+		}
+        public function chartToScreen(chartX:Number, chartY:Number, theSeries:Series):Point
+		{
+			var tmpCache:Array = new Array({chartX:chartX, chartY:chartY});
+			if(theSeries) 
+			{
+				theSeries.dataTransform.transformCache(tmpCache, "chartX", "screenX", "chartY", "screenY");
+			}
+			return new Point(Math.round(tmpCache[0].screenX), Math.round(tmpCache[0].screenY));
+        	
+		}
+		//根据坐标值获取pos
+		public function getNumericChartValue(inValue:String, theAxis:IAxis):Object
+		{
+			var axisCache:Array = new Array({inValue: inValue})	        	
+			if(!(theAxis is LinearAxis))
+			{
+				theAxis.mapCache(axisCache, "inValue", "outValue", true);
+				return {numericValue: axisCache[0].outValue}
+			}
+			else
+			{
+				return {numericValue: Number(inValue)};
+			}
+		}
+		
+		public function doKey(keyCode:int):void
+		{
+			if(keyCode == App.KeyCode.ENTER)
+			{
+				dbclickHandler(null);
+			}
+		}
+		
+		private function dbclickHandler(event:MouseEvent):void
+		{
+			var evt:MinuteEvent=new MinuteEvent(MinuteEvent.MinuteDBClick);
+			evt.code = _minute_Params.code;
+			dispatchEvent(evt);
+		}
+		
+		private function minuteHandler(event:ServerEvent):void
+		{
+			var dt:DataTable = event.content.table;
+			var attr:Object = event.content.attr;
+			_pre = event.content.pre;
+			var tmpArray:Array;
+			var lastVol:int = 0;
+			_minuteList.removeAll();
+			for(var i:int=0;i<dt.length;i++)
+			{
+				var hour:int = int(dt.getValue(i,"DATETIME").substr(6, 2));
+				var minute:int=int(dt.getValue(i,"DATETIME").substr(8, 2));
+				if(hour==9 && minute<30){
+					continue;
+				}
+				var vol:Number = Math.ceil(Number(dt.getValue(i,"VOL"))/100);
+				var newvol:Number = vol - lastVol;
+				lastVol=vol;
+				tmpArray=[dt.getValue(i,"DATETIME"),dt.getValue(i,"最新"),dt.getValue(i,"均价"),
+					dt.getValue(i,"分时涨跌"),dt.getValue(i,"分时涨幅"),dt.getValue(i,"VOL"),newvol.toString(),dt.getValue(i,"领先")];
+				var mlistvo:MinuteListVO=MinuteListVO.create(tmpArray);
+				_minuteList.addItem(mlistvo);
+//				trace(hour+':'+minute);
+			}
+			measureVars();
+		}
+		
+		private function minutePushHandler(event:ServerEvent):void
+		{
+			var dt:DataTable = event.content.table;
+			var attr:Object = event.content.attr;
+			var tmpArray:Array;
+			var time:String;
+			var lastVol:int = 0;
+			
+			for(var i:int=0;i<dt.length;i++)
+			{
+				var hour:int = int(dt.getValue(i,"DATETIME").substr(6, 2));
+				var minute:int=int(dt.getValue(i,"DATETIME").substr(8, 2));
+				if(hour==9 && minute<30){
+					continue;
+				}
+				
+				time = dt.getValue(i,"DATETIME").toString();
+				trace(time);
+				var idx:int = timeExist(_minuteList,time);
+				var vol:Number;
+				if(idx>0)
+				{
+					lastVol= Number(MinuteListVO(_minuteList.getItemAt(idx-1)).vol)/100;
+				}
+				vol = Math.ceil(Number(dt.getValue(i,"VOL"))/100);
+				var newvol:Number = vol - lastVol;
+				lastVol=vol;
+				tmpArray=[dt.getValue(i,"DATETIME"),dt.getValue(i,"最新"),dt.getValue(i,"均价"),
+					dt.getValue(i,"分时涨跌"),dt.getValue(i,"分时涨幅"),dt.getValue(i,"VOL"),newvol.toString(),dt.getValue(i,"领先")];
+				var mlistvo:MinuteListVO=MinuteListVO.create(tmpArray);
+				if(idx>-1)
+				{
+					_minuteList.setItemAt(mlistvo,idx);
+				}
+				else
+					_minuteList.addItem(mlistvo);
+			}
+			
+			measureVars();
+		}
+		
+		private function measureVars():void
+		{
+			var mlvo:MinuteListVO;
+			var newp:Number;
+			var junjia:Number;
+			var zhangfu:Number;
+			
+			if(_minuteList.length > 0)
+			{
+				mlvo=MinuteListVO(_minuteList.getItemAt(0));
+				_minuteMax = Number(mlvo.newp);
+				_minuteMin = _minuteMax;
+				junjia = Number(mlvo.junjia);
+				_percentMax = Number(mlvo.zhangfu);
+				_percentMin = _percentMax;
+				
+				for(var i:int;i<_minuteList.length;i++)
+				{
+					mlvo=MinuteListVO(_minuteList.getItemAt(i));
+					newp=Number(mlvo.newp);
+					junjia = Number(mlvo.junjia);
+					zhangfu=Number(mlvo.zhangfu);
+					if(_minuteMax<newp)
+						_minuteMax=newp;
+					if(_minuteMax<junjia)
+						_minuteMax=junjia;
+						
+					if(_minuteMin>newp)
+						_minuteMin=newp;
+					if(_minuteMin>junjia)
+						_minuteMin=junjia;
+						
+					if(_percentMax<zhangfu)
+						_percentMax=zhangfu;
+					if(_percentMin>zhangfu)
+						_percentMin=zhangfu;
+				}
+				
+				
+				var diff:Number = Math.max(_minuteMax-_pre,_pre-_minuteMin);
+				_minuteMax = _pre + diff;
+				_minuteMin = _pre - diff;
+				_minuteInt= (_minuteMax - _minuteMin) /_ycount;
+				//if(_minuteInt ==0)_minuteInt =1;
+				trace('_minuteMax='+_minuteMax+'     _minuteMin='+_minuteMin);
+			}
+		}
+		
+		private function timeExist(list:ArrayCollection,time:String):int
+		{
+			var tmpitem:MinuteListVO;
+			for(var i:int=0;i<list.length;i++)
+			{
+				tmpitem = list.getItemAt(i) as MinuteListVO;
+				if(tmpitem.time == time)
+				{
+					return i;
+				}
+			}
+			return -1;
+		}
+		
+        //初始化分时x坐标
+        public function initxdata():void{
+        	_xdata = new ArrayCollection();
+			for (var i:Number = 9; i < 15; i++){
+				
+				for(var j:Number=0;j<60;j++){
+					if((i==9 && j<30) || (i==11 && j>30) || i==12){
+						continue;
+					}
+					var xh:String = (i==9)? '0'+i.toString() : i.toString();
+					var xm:String = (j<10)? '0'+j.toString() : j.toString();
+					var xitem:String=xh+":"+xm;
+					_xdata.addItem(xitem);
+				}
+			}
+			_xdata.addItem("15:00");
+        }
+        
+        public function switchView(code:String):void
+        {
+        	_minute_Params.code = code;
+        	if(App.isIndex(code))
+        		hqServer.requestIndexMinute(_minute_Params);
+        	else
+	        	hqServer.requestStockMinute(_minute_Params);
+        	var stockinfo:StockVO=App.getStock(code);
+        	if(stockinfo == null)
+        		lbname.text ="";
+        	else
+        		lbname.text = "["+stockinfo.name+"]";
+        		
+	        lbcode.text = code;
+	        _fix = App.getFix(stockinfo);
+	        priceAxis.NumberFix = _fix;
+        }
+        
+		public function MinuteTip(hd:HitData):String
+		{
+			var date:String=hd.item['time'].toString();
+		  	var xianjia:Number=hd.item['newp'];
+		  	var junjia:Number=hd.item['junjia'];
+		  	var xianshou:String=hd.item['newvol'];
+			var shijian:String = date;
+			if(date.length == 10){
+		  		var xiaoshi:String = date.substr(6,2);
+		  		var fenzhong:String= date.substr(8,2);
+		  		shijian = xiaoshi + ':' +fenzhong;
+			}else if(date.length == 14){
+		  		shijian = date.substr(9, 5);
+			}else{
+				shijian = date;
+			}
+			
+		  	var zhangfu:String = (Math.round((Number(xianjia) - _pre)/_pre * 100000) * 0.001).toFixed(2);
+		  	var zhangdie:String = (Number(xianjia) - _pre).toFixed(3);
+		  	var color:String = (Number(xianjia) >= _pre)? '#FF0000' : '#42790B';
+		  	return "<FONT SIZE='10'><B>时间：</B>"+shijian+"<br><B>成交</B>：</FONT><FONT SIZE='10' COLOR='"+color+"'>"+xianjia.toFixed(3)+"</FONT><br><FONT SIZE='10'><B>均价：</B></FONT><FONT SIZE='10' COLOR='"+color+"'>"+junjia.toFixed(3)+"</FONT><br><FONT SIZE='10'><B>涨跌：</B></FONT><FONT SIZE='10' COLOR='"+color+"'>"+zhangdie +"</FONT><br><FONT SIZE='10'><B>涨幅：</B></FONT><FONT SIZE='10' COLOR='"+color+"'>"+zhangfu+"%</FONT><br><FONT SIZE='10'><B>现手：</B></FONT><FONT SIZE='10'>"+xianshou+"</FONT>";
+		}
+		
+		[Bindable(event="styleChanged")]
+		private function getcolor(name:String):*
+		{
+			return StyleManager.getStyleDeclaration(name).getStyle('color');
+		}
+		public function resetStyle():void
+		{
+			dispatchEvent(new Event("styleChanged"));
+		}
+		
+		//格式化分钟线百分比纵轴
+		private function percentLabel(item:Object, prevValue:Object, axis:IAxis):String {
+            return Number(item).toFixed(1)+'%';
+  		}
+  		
+  		//格式化价格
+		private function priceLabel(item:Object, prevValue:Object, axis:IAxis):String {
+            return Number(item).toFixed(_fix);
+  		}
+	]]>
+</mx:Script>
+<mx:HBox height="20"  paddingBottom="0" width="100%" verticalScrollPolicy="off" horizontalScrollPolicy="off">
+<mx:Spacer width="10" />
+<mx:Label id="lbcode" height="100%" styleName="stockbuysell"/>
+<mx:Label id="lbname" height="100%" styleName="stockbuysell"/>
+<mx:Label text="—>分时走势" height="100%" styleName="stockbuysell" />
+</mx:HBox>
+<mx:VBox verticalGap="0" paddingBottom="0" paddingTop="0" verticalScrollPolicy="off" horizontalScrollPolicy="off" width="100%" height="100%">
+<mx:LineChart id="minuteLinechart" styleName="minuteLinechart" seriesFilters="[]" gutterLeft="40" gutterBottom="0" paddingBottom="0" gutterRight="2" showDataTips="true" gutterTop="0" dataTipMode="multiple" height="80%" width="100%" left="0" dataTipFunction="MinuteTip" dataTipRenderer="{com.ChartDataTip}" dataProvider="{_minuteList}" > 
+<mx:horizontalAxis>
+    <mx:CategoryAxis id="horAxis" dataProvider="{_xdata}"  />
+</mx:horizontalAxis>
+<mx:horizontalAxisRenderer>
+	<mx:AxisRenderer showLabels="false" tickPlacement="none">
+		<mx:axisStroke>
+    		<mx:Stroke weight="1" color="{getcolor('.minuteStroke1')}" caps="none" />
+    	</mx:axisStroke>
+	</mx:AxisRenderer>
+</mx:horizontalAxisRenderer>
+<mx:secondHorizontalAxis>
+	<mx:CategoryAxis   id="shorAxis"/>
+</mx:secondHorizontalAxis>
+<mx:secondHorizontalAxisRenderer>
+	<mx:AxisRenderer showLabels="false" tickPlacement="none">
+		<mx:axisStroke>
+    		<mx:Stroke weight="1" color="{getcolor('.minuteStroke2')}" caps="none" />
+    	</mx:axisStroke>
+	</mx:AxisRenderer>
+</mx:secondHorizontalAxisRenderer>
+
+<mx:verticalAxis>
+    <com:MinuteAxis labelCount="{_ycount/2}" maximum="{_minuteMax}" minimum="{_minuteMin}" interval="{_minuteInt}" id="priceAxis" />
+</mx:verticalAxis>
+  
+<mx:verticalAxisRenderer>
+    <com:MinuteAxisRender tickPlacement="none" id="minuteAxisRender">
+    	<com:axisStroke>
+    		<mx:Stroke weight="1" color="{getcolor('.minuteStroke3')}" caps="none" />
+    	</com:axisStroke>
+    </com:MinuteAxisRender>
+</mx:verticalAxisRenderer>
+
+<mx:secondVerticalAxis >
+	<mx:LinearAxis baseAtZero="false" />
+</mx:secondVerticalAxis>
+  
+<mx:secondVerticalAxisRenderer>
+    <mx:AxisRenderer  tickPlacement="none" showLabels="false">
+    	<mx:axisStroke>
+    		<mx:Stroke weight="1" color="{getcolor('.klineStroke4')}" caps="none" />
+    	</mx:axisStroke>
+    </mx:AxisRenderer>
+</mx:secondVerticalAxisRenderer>
+
+<mx:series>
+	<mx:LineSeries displayName="成交" yField="newp" id="horSeries"  radius="0">
+		<mx:lineStroke>
+			<mx:Stroke weight="1" color="{getcolor('.minuteStroke5')}"  />
+		</mx:lineStroke>
+	</mx:LineSeries>
+	<mx:LineSeries displayName="均价" yField="junjia" >
+		<mx:lineStroke>
+			<mx:Stroke weight="1" color="{getcolor('.minuteStroke6')}"  />
+		</mx:lineStroke>
+	</mx:LineSeries>
+</mx:series>
+
+<mx:backgroundElements>
+    <mx:Array>
+        <com:DotGridLines id="minuteGridLine" direction="both" horizontalChangeCount="12" verticalChangeCount="30" midbold="true">
+            <com:horizontalStroke>
+                <mx:Stroke weight="0"  color="{getcolor('.minuteStroke7')}" alpha="0.5"/>
+            </com:horizontalStroke>
+            <com:verticalStroke>
+                <mx:Stroke weight="0"  color="{getcolor('.minuteStroke8')}" alpha="0.5"/>
+            </com:verticalStroke>
+        </com:DotGridLines>
+    </mx:Array>
+</mx:backgroundElements>
+
+<mx:annotationElements>
+	<mx:Canvas id="linesCanvas" horizontalScrollPolicy="off" verticalScrollPolicy="off"  />
+</mx:annotationElements>
+	</mx:LineChart>
+	
+<mx:ColumnChart id="minuteColumnchart" styleName="minuteColumnchart" seriesFilters="[]" columnWidthRatio="0.25" showDataTips="true" 
+ height="20%" width="100%" gutterLeft="40" gutterTop="0" gutterBottom="0" gutterRight="2" left="0" right="0" bottom="0" dataProvider="{_minuteList}">
+	<mx:horizontalAxis>
+            <mx:CategoryAxis  dataProvider="{_xdata}" id="horAxis1"/>
+        </mx:horizontalAxis>
+        <mx:horizontalAxisRenderer>
+        	<mx:AxisRenderer showLabels="false" tickPlacement="none">
+        		<mx:axisStroke>
+            		<mx:Stroke weight="1" color="{getcolor('.minuteStroke9')}" caps="none" />
+            	</mx:axisStroke>
+        	</mx:AxisRenderer>
+        </mx:horizontalAxisRenderer>
+		
+		<mx:secondHorizontalAxis>
+        	<mx:CategoryAxis   id="shorAxis1"/>
+        </mx:secondHorizontalAxis>
+        <mx:secondHorizontalAxisRenderer>
+        	<mx:AxisRenderer showLabels="false" tickPlacement="none">
+        		<mx:axisStroke>
+            		<mx:Stroke weight="1" color="{getcolor('.minuteStroke10')}" caps="none" />
+            	</mx:axisStroke>
+        	</mx:AxisRenderer>
+        </mx:secondHorizontalAxisRenderer>
+		
+		<mx:verticalAxis>
+            <mx:LinearAxis baseAtZero="false"/>
+        </mx:verticalAxis>
+        <mx:verticalAxisRenderer>
+            <mx:AxisRenderer showLabels="false" tickPlacement="none">
+            	<mx:axisStroke>
+            		<mx:Stroke weight="1" color="{getcolor('.minuteStroke11')}" caps="none" />
+            	</mx:axisStroke>
+            </mx:AxisRenderer>
+        </mx:verticalAxisRenderer>
+        
+        
+        <mx:secondVerticalAxis >
+        	<mx:LinearAxis baseAtZero="false"/>
+        </mx:secondVerticalAxis>
+  
+		<mx:secondVerticalAxisRenderer>
+            <mx:AxisRenderer showLabels="false" tickPlacement="none">
+            	<mx:axisStroke>
+            		<mx:Stroke weight="1" color="{getcolor('.minuteStroke12')}" caps="none" />
+            	</mx:axisStroke>
+            </mx:AxisRenderer>
+        </mx:secondVerticalAxisRenderer>
+        
+		<mx:series>
+			<mx:ColumnSeries displayName="成交量" yField="newvol">
+				<mx:stroke>
+					<mx:Stroke weight="0" color="{getcolor('.minuteStroke13')}" />
+				</mx:stroke>
+			</mx:ColumnSeries>
+		</mx:series>
+		
+		<mx:backgroundElements>
+            <mx:Array>
+                <com:DotGridLines direction="both" horizontalChangeCount="4" verticalChangeCount="30" midbold="false">
+                    <com:horizontalStroke>
+                        <mx:Stroke weight="0"  color="{getcolor('.minuteStroke14')}" alpha=".5"/>
+                    </com:horizontalStroke>
+                    <com:verticalStroke>
+                        <mx:Stroke weight="0"  color="{getcolor('.minuteStroke15')}" alpha=".5"/>
+                    </com:verticalStroke>
+                </com:DotGridLines>
+            </mx:Array>
+        </mx:backgroundElements>
+        
+        <mx:annotationElements>
+			<mx:Canvas id="linesCanvas1" horizontalScrollPolicy="off" verticalScrollPolicy="off"  />
+		</mx:annotationElements>
+</mx:ColumnChart>	
+</mx:VBox>
+</mx:VBox>

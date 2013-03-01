@@ -1,0 +1,605 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mx:Canvas xmlns:mx="http://www.adobe.com/2006/mxml" width="100%" height="100%" implements="com.IDoKey"  horizontalScrollPolicy="off" verticalScrollPolicy="off">
+	<mx:Script>
+		<![CDATA[
+			import utility.App;
+		]]>
+	</mx:Script>
+<mx:Script>
+	<![CDATA[
+		import mx.controls.dataGridClasses.DataGridColumn;
+		import mx.collections.ArrayCollection;
+		import mx.events.DataGridEvent;
+		import events.TradeEvent;
+		import mx.controls.Alert;
+		import mx.events.ListEvent;
+		import flash.utils.setTimeout;
+		import flash.utils.clearTimeout;
+		import flashq.server.tools.DataTable;
+		import mx.events.ScrollEvent;
+		import utility.App;
+		import flashq.server.IHqServer;
+		import flashq.server.events.ServerEvent;
+		import vo.StockListVO;
+		import vo.StockVO;
+		
+		private var _codeList:Object;
+		private var hqServer:IHqServer;
+		
+		private var _stockRank_Params:Object={codes:"",item:"199112",dir:'D'};
+		private var _marketRank_Params:Object={market:"17;33",item:"199112",dir:'D',begin:0,count:16,onlycode:0};
+		private var _marketrankList:ArrayCollection=new ArrayCollection();
+		private var _stockrankList:ArrayCollection=new ArrayCollection();
+		
+		private var _selectedItem:StockListVO;
+		private var _marketselectedIndex:int=0;
+		private var _stockselectedIndex:int=0;
+		private static const SORTUP:String="▽";
+		private static const SORTDOWN:String="△";
+		private var _selectedMarketColumnIdx:int=2;
+		private var _selectedStockColumnIdx:int=2;
+		private var tradeLength:int = 16; //股票报价列表的长度
+		private var _width:Number;
+		private var _height:Number;
+		[Bindable]
+		private var _rowHeight:Number = 23;
+		
+		public function init(server:IHqServer,height:Number,width:Number):void
+		{
+			hqServer = server;
+			hqServer.addEventListener(ServerEvent.MarketRank_READY,marketrankHandler);
+			hqServer.addEventListener(ServerEvent.MarketRank_PUSH_READY,marketrankPushHandler);
+			hqServer.addEventListener(ServerEvent.StockRank_READY,stockrankHandler);
+			hqServer.addEventListener(ServerEvent.StockRank_PUSH_READY,stockrankPushHandler);
+			
+			marketrankgrid.addEventListener(ListEvent.ITEM_CLICK,marketrankItemClick);
+			stockrankgrid.addEventListener(ListEvent.ITEM_CLICK,stockrankItemClick);
+			marketrankgrid.addEventListener(ListEvent.ITEM_DOUBLE_CLICK,marketrankItemDBClick);
+			stockrankgrid.addEventListener(ListEvent.ITEM_DOUBLE_CLICK,stockrankItemDBClick);
+			marketrankgrid.addEventListener(DataGridEvent.HEADER_RELEASE,marketColumnHandler);
+			stockrankgrid.addEventListener(DataGridEvent.HEADER_RELEASE,stockColumnHandler);
+			_marketRank_Params.market = App.defaultMarket; //初始化为默认盘
+			
+			_width=width;//该组件能显示的宽度
+			_height=height;//....高度
+			tradeLength = int(_height/_rowHeight)-1;//减去头部的高度
+			_marketRank_Params.count = tradeLength;
+		}
+		
+		private function marketColumnHandler(event:DataGridEvent):void
+		{
+			_selectedMarketColumnIdx = event.columnIndex;
+			event.preventDefault();
+			setMarketColumnsort(event.columnIndex);
+			sendRequest();
+		}
+		
+		private function stockColumnHandler(event:DataGridEvent):void
+		{
+			_selectedStockColumnIdx = event.columnIndex;
+			event.preventDefault();
+			setStockColumnsort(event.columnIndex);
+			sendRequest();
+		}
+		
+		private function swapMarketColumn(idx:int):void
+		{
+			for(var i:int=0;i<marketrankgrid.columnCount;i++)
+			{
+				var c:DataGridColumn = marketrankgrid.columns[i] as DataGridColumn;
+				c.headerText = c.headerText.replace(SORTDOWN,"");
+				c.headerText = c.headerText.replace(SORTUP,"");
+			}
+			
+			var column:DataGridColumn = marketrankgrid.columns[idx];
+			if(_marketRank_Params.dir=="A")
+				column.headerText = column.headerText + SORTDOWN;
+			else if(_marketRank_Params.dir=="D")
+				column.headerText = column.headerText + SORTUP;
+		}
+		
+		private function swapStockColumn(idx:int):void
+		{
+			for(var i:int=0;i<stockrankgrid.columnCount;i++)
+			{
+				var c:DataGridColumn = stockrankgrid.columns[i] as DataGridColumn;
+				c.headerText = c.headerText.replace(SORTDOWN,"");
+				c.headerText = c.headerText.replace(SORTUP,"");
+			}
+			
+			var column:DataGridColumn = stockrankgrid.columns[idx];
+			if(_stockRank_Params.dir=="A")
+				column.headerText = column.headerText + SORTDOWN;
+			else if(_stockRank_Params.dir=="D")
+				column.headerText = column.headerText + SORTUP;
+		}
+		
+		private function setMarketColumnsort(columnidx:int):void
+		{
+			var olditem:String = _marketRank_Params.item;
+			if(columnidx==0)_marketRank_Params.item="5";
+			else if(columnidx==1) _marketRank_Params.item="55";
+			else if(columnidx==2)_marketRank_Params.item="199112";
+			else if(columnidx==3)_marketRank_Params.item="10";
+			else if(columnidx==4)_marketRank_Params.item="49";
+			else if(columnidx==5)_marketRank_Params.item="7";
+			else if(columnidx==6)_marketRank_Params.item="8";
+			else if(columnidx==7)_marketRank_Params.item="9";
+			
+			_marketRank_Params.begin = 0;
+			if(olditem!=_marketRank_Params.item)_marketRank_Params.dir="D";
+			else if( _marketRank_Params.dir=="A") _marketRank_Params.dir ="D";
+			else if( _marketRank_Params.dir=="D") _marketRank_Params.dir ="A"
+		}
+		
+		private function setStockColumnsort(columnidx:int):void
+		{
+			var olditem:String = _stockRank_Params.item;
+			if(columnidx==0)_stockRank_Params.item="5";
+			else if(columnidx==1) _stockRank_Params.item="55";
+			else if(columnidx==2)_stockRank_Params.item="199112";
+			else if(columnidx==3)_stockRank_Params.item="10";
+			else if(columnidx==4)_stockRank_Params.item="49";
+			else if(columnidx==5)_stockRank_Params.item="7";
+			else if(columnidx==6)_stockRank_Params.item="8";
+			else if(columnidx==7)_stockRank_Params.item="9";
+			
+			_stockRank_Params.begin = 0;
+			if(olditem!=_stockRank_Params.item)_stockRank_Params.dir="D";
+			else if( _stockRank_Params.dir=="A") _stockRank_Params.dir ="D";
+			else if( _stockRank_Params.dir=="D") _stockRank_Params.dir ="A"
+		}
+		
+		public function doKey(keyCode:int):void
+		{
+			var idx:int;
+			if(keyCode == App.KeyCode.PAGEUP)
+				showPrev();
+			else if(keyCode == App.KeyCode.PAGEDOWN)
+				showNext();
+			else if(keyCode == App.KeyCode.ENTER)
+			{
+				if(_selectedItem == null) return;
+				var evt:TradeEvent=new TradeEvent(TradeEvent.StockDBClick);
+				evt.code = _selectedItem.code;
+				dispatchEvent(evt);
+			}
+			else if(keyCode == App.KeyCode.DOWN)
+			{
+				if(viewstack1.selectedIndex == 0)
+				{
+					idx = marketrankgrid.selectedIndex + 1;
+					if(idx >= _marketrankList.length) idx=0;
+					marketrankgrid.selectedIndex = idx;
+					_marketselectedIndex = idx;
+					_selectedItem = marketrankgrid.selectedItem as StockListVO;
+				}
+				else if(viewstack1.selectedIndex == 1)
+				{
+					idx = stockrankgrid.selectedIndex + 1;
+					if(idx >= _stockrankList.length) idx=0;
+					stockrankgrid.selectedIndex = idx;
+					stockrankgrid.scrollToIndex(idx);
+					_stockselectedIndex = idx;
+					_selectedItem = stockrankgrid.selectedItem as StockListVO;
+					
+				}
+				dispatchItemSelected();
+			}
+			else if(keyCode == App.KeyCode.UP)
+			{
+				if(viewstack1.selectedIndex == 0)
+				{
+					idx = marketrankgrid.selectedIndex - 1;
+					if(idx<0) idx = _marketrankList.length - 1;
+					marketrankgrid.selectedIndex = idx;
+					_marketselectedIndex = idx;
+					_selectedItem = marketrankgrid.selectedItem as StockListVO;
+				}
+				else if(viewstack1.selectedIndex == 1)
+				{
+					idx = stockrankgrid.selectedIndex - 1;
+					if(idx<0) idx = _stockrankList.length - 1;
+					stockrankgrid.selectedIndex = idx;
+					stockrankgrid.scrollToIndex(idx);
+					_stockselectedIndex = idx;
+					_selectedItem = stockrankgrid.selectedItem as StockListVO;
+				}
+				dispatchItemSelected();
+			}
+		}
+		
+		private function marketrankItemDBClick(event:ListEvent):void
+		{
+			_selectedItem=_marketrankList.getItemAt(event.rowIndex)  as StockListVO;
+			var evt:TradeEvent=new TradeEvent(TradeEvent.StockDBClick);
+			evt.code = _selectedItem.code;
+			dispatchEvent(evt);
+		}
+		
+		private function stockrankItemDBClick(event:ListEvent):void
+		{
+			_selectedItem=_stockrankList.getItemAt(event.rowIndex)  as StockListVO;
+			var evt:TradeEvent=new TradeEvent(TradeEvent.StockDBClick);
+			evt.code = _selectedItem.code;
+			dispatchEvent(evt);
+		} 
+		
+		private function marketrankItemClick(event:ListEvent):void
+		{
+			_selectedItem=_marketrankList.getItemAt(event.rowIndex)  as StockListVO;
+			_marketselectedIndex=event.rowIndex;
+			
+			dispatchItemSelected();
+		}
+		
+		private function stockrankItemClick(event:ListEvent):void
+		{
+			_selectedItem=_stockrankList.getItemAt(event.rowIndex) as StockListVO;
+			_stockselectedIndex=event.rowIndex;
+			
+			dispatchItemSelected();
+		}
+		
+		private function stockrankHandler(event:ServerEvent):void
+		{
+			trace("stockrankHandler");
+			var dt:DataTable = event.content.table;
+			var attr:Object = event.content.attr;
+			var tmpArray:Array;
+			var code:String;
+			
+			_stockrankList.removeAll();
+			
+			for(var i:int=0;i<dt.length;i++)
+			{
+				code = dt.getValue(i,"CODE").toString();
+				tmpArray =[code,getCodename(code),dt.getValue(i,"ZHANGDIEFU"),dt.getValue(i,"NEW"),
+					dt.getValue(i,"NEWVOL"),dt.getValue(i,"OPEN"),dt.getValue(i,"HIGH"),dt.getValue(i,"LOW"),dt.getValue(i,"VOLCLASS"),dt.getValue(i,"PRE")];
+				var slistvo:StockListVO=StockListVO.create(tmpArray);
+				_stockrankList.addItem(slistvo);
+			}
+			stockrankgrid.selectedIndex = _stockselectedIndex;
+			_selectedItem = stockrankgrid.selectedItem  as StockListVO;
+			stockrankgrid.scrollToIndex(_stockselectedIndex);
+			swapStockColumn(_selectedStockColumnIdx);
+			dispatchItemSelected();
+		}
+		
+		//获取股票名称
+		private function getCodename(code:String):String
+		{
+        	var stockinfo:StockVO=App.getStock(code);
+        	if(stockinfo == null)
+        		return "--";
+        	else
+        		return stockinfo.name;
+		}
+		
+		private function stockrankPushHandler(event:ServerEvent):void
+		{
+			trace("stockrankPushHandler");
+			var dt:DataTable = event.content.table;
+			var attr:Object = event.content.attr;
+			var code:String;
+			var tmpArray:Array;
+			
+			for(var i:int=0;i<dt.length;i++)
+			{
+				code = dt.getValue(i,"CODE").toString();
+				var idx:int = codeExist(_stockrankList,code);
+				if(idx>-1)
+				{
+					tmpArray =[code,getCodename(code),dt.getValue(i,"ZHANGDIEFU"),dt.getValue(i,"NEW"),
+						dt.getValue(i,"NEWVOL"),dt.getValue(i,"OPEN"),dt.getValue(i,"HIGH"),dt.getValue(i,"LOW"),dt.getValue(i,"VOLCLASS"),dt.getValue(i,"PRE")];
+					var slistvo:StockListVO=StockListVO.create(tmpArray);
+					_stockrankList.setItemAt(slistvo,idx);
+				}
+			}
+			
+		}
+		private function marketrankHandler(event:ServerEvent):void
+		{	
+			trace("marketrankHandler");
+			var dt:DataTable = event.content.table;
+			var attr:Object = event.content.attr;
+			var tmpArray:Array;
+			var code:String;
+			
+			_marketrankList.removeAll();
+			
+			for(var i:int=0;i<dt.length;i++)
+			{
+				code = dt.getValue(i,"CODE").toString();
+				tmpArray =[code,getCodename(code),dt.getValue(i,"ZHANGDIEFU"),dt.getValue(i,"NEW"),
+					dt.getValue(i,"NEWVOL"),dt.getValue(i,"OPEN"),dt.getValue(i,"HIGH"),dt.getValue(i,"LOW"),dt.getValue(i,"VOLCLASS"),dt.getValue(i,"PRE")];
+				var slistvo:StockListVO=StockListVO.create(tmpArray);
+				_marketrankList.addItem(slistvo);
+			}
+			
+			marketrankgrid.selectedIndex = _marketselectedIndex;
+			_selectedItem = marketrankgrid.selectedItem  as StockListVO;
+			swapMarketColumn(_selectedMarketColumnIdx);
+			dispatchItemSelected();
+		}
+		
+		private function dispatchItemSelected():void
+		{
+			var evt:TradeEvent=new TradeEvent(TradeEvent.StockSelected);
+			if(_selectedItem == null)
+				evt.code ="";
+			else
+				evt.code = _selectedItem.code;
+			dispatchEvent(evt);
+		}
+		
+		private function marketrankPushHandler(event:ServerEvent):void
+		{
+			trace("marketrankPushHandler");
+			var dt:DataTable = event.content.table;
+			var attr:Object = event.content.attr;
+			var code:String;
+			var tmpArray:Array;
+			
+			for(var i:int=0;i<dt.length;i++)
+			{
+				code = dt.getValue(i,"CODE").toString();
+				var idx:int = codeExist(_marketrankList,code);
+				if(idx>-1)
+				{
+					tmpArray =[code,getCodename(code),dt.getValue(i,"ZHANGDIEFU"),dt.getValue(i,"NEW"),
+						dt.getValue(i,"NEWVOL"),dt.getValue(i,"OPEN"),dt.getValue(i,"HIGH"),dt.getValue(i,"LOW"),dt.getValue(i,"VOLCLASS"),dt.getValue(i,"PRE")];
+					var slistvo:StockListVO=StockListVO.create(tmpArray);
+					_marketrankList.setItemAt(slistvo,idx);
+				}
+			}
+		}
+				
+		private function codeExist(list:ArrayCollection,code:String):int
+		{
+			var tmpitem:StockListVO;
+			for(var i:int=0;i<list.length;i++)
+			{
+				tmpitem = list.getItemAt(i) as StockListVO;
+				if(tmpitem.code == code)
+				{
+					return i;
+				}
+			}
+			return -1;
+		}
+		private function sendRequest():void
+		{
+			if(viewstack1.selectedIndex == 1)
+			{
+				_stockRank_Params.codes = App.cookie.selfList.join(",");
+				hqServer.requestStockRank(_stockRank_Params);
+			}
+			else
+			{
+				hqServer.requestMarketRank(_marketRank_Params);
+			}
+		}
+				
+		//切换视图
+		public function switchView(index:int,marketType:String=""):void
+		{
+			if(marketType !="" && marketType != _marketRank_Params.market)
+			{
+				_marketRank_Params.begin=0;
+				_marketRank_Params.market = marketType;
+			}
+			viewstack1.selectedIndex = index -2;
+			sendRequest();//请求数据
+		}
+		
+		public function showNext():void
+		{
+			if(viewstack1.selectedIndex == 0)
+			{
+				_marketRank_Params.begin =  _marketRank_Params.begin+_marketRank_Params.count;		
+				sendRequest();
+			}
+		}
+		
+		public function showPrev():void
+		{
+			if(viewstack1.selectedIndex == 0)
+			{
+				_marketRank_Params.begin = _marketRank_Params.begin - _marketRank_Params.count;
+				if(_marketRank_Params.begin<0)_marketRank_Params.begin=0;
+				sendRequest();
+			}
+			
+		}
+		
+		//获取下一只股票
+		public function getNextStock():Object
+		{
+			if(viewstack1.selectedIndex == 0)
+			{
+				_marketselectedIndex++;
+				if(_marketselectedIndex > (_marketrankList.length -1))
+				{
+					_marketselectedIndex = 0;
+					showNext();
+					return null;
+				}
+				return _marketrankList.getItemAt(_marketselectedIndex);
+			}
+			else if(viewstack1.selectedIndex == 1)
+			{
+				_stockselectedIndex++;
+				if(_stockselectedIndex > (_stockrankList.length -1))
+					_stockselectedIndex = _stockrankList.length -1;
+				return _stockrankList.getItemAt(_stockselectedIndex);
+			}
+			return null;
+		}
+		
+		//获取上一只股票
+		public function getPrevStock():Object
+		{
+			if(viewstack1.selectedIndex == 0)
+			{
+				_marketselectedIndex--;
+				if(_marketselectedIndex<0)
+				{
+					_marketselectedIndex =_marketrankList.length -1;
+					showPrev();
+					return null;
+				}
+				return _marketrankList.getItemAt(_marketselectedIndex);
+			}
+			else if(viewstack1.selectedIndex == 1)
+			{
+				_stockselectedIndex--;
+				if(_stockselectedIndex<0) _stockselectedIndex=0;
+				return _stockrankList.getItemAt(_stockselectedIndex);
+			}
+			return null;
+		}
+		
+		public function getSelectedMarket():String
+		{
+			return _marketRank_Params.market;
+		}
+		
+		[Bindable(event="styleChanged")]
+	   	private function getcolor(name:String):*
+		{
+			return StyleManager.getStyleDeclaration(name).getStyle('color');
+		}
+		
+		public function resetStyle():void
+		{
+			dispatchEvent(new Event("styleChanged"));
+			marketrankgrid.selectedIndex=-1;
+			stockrankgrid.selectedIndex =-1;
+		}
+		
+		private function NumberCompare(obj1:Object,obj2:Object):int
+		{
+			var num1:Number = obj1 as Number;
+			var num2:Number = obj2 as Number;
+			if(num1>num2) return 1;
+			else if(num1 == num2) return 0;
+			else return -1;
+		}
+	]]>
+</mx:Script>
+<mx:ViewStack x="0" y="0" id="viewstack1" width="100%" height="100%" selectedIndex="0">
+<mx:Canvas width="100%" height="100%" x="0" y="0">
+<mx:DataGrid id="marketrankgrid" x="0" y="0" height="100%" width="100%" styleName="tradeList" verticalScrollPolicy="off" doubleClickEnabled="true" rowHeight="{_rowHeight}" headerHeight="{_rowHeight}" dataProvider="{_marketrankList}">
+			<mx:columns>
+				<mx:DataGridColumn headerText="股票代码" dataField="code" sortable="true" draggable="false" />
+				<mx:DataGridColumn headerText="股票名称" dataField="name" sortable="true" draggable="false" />
+				<mx:DataGridColumn headerText="涨    幅" dataField="zhangfu" sortable="true" draggable="false">
+					<mx:itemRenderer>
+                        <mx:Component>
+                        <mx:Label  text="{data.zhangfu}"
+                                   styleName="{(data.zhangfu>=0) ? 'tradeItem1':'tradeItem2'}" textAlign="left"/>
+                        </mx:Component>
+                    </mx:itemRenderer>
+				</mx:DataGridColumn>
+				<mx:DataGridColumn headerText="现    价" dataField="newp" sortable="true" draggable="false" >
+					<mx:itemRenderer>
+                        <mx:Component>
+                        <mx:Label  text="{data.newp}"
+                                   styleName="{(data.zhangfu>=0) ? 'tradeItem1':'tradeItem2'}" textAlign="left"/>
+                        </mx:Component>
+                    </mx:itemRenderer>
+				</mx:DataGridColumn>
+				<mx:DataGridColumn headerText="现     手" dataField="newvol" sortable="true" draggable="false" >
+					<mx:itemRenderer>
+                        <mx:Component>
+                        <mx:Label  text="{data.newvol}"
+                                   styleName="{(data.volclass > 4) ? 'tradenewvol1':'tradenewvol2'}" textAlign="left"/>
+                        </mx:Component>
+                    </mx:itemRenderer>
+				</mx:DataGridColumn>
+				<mx:DataGridColumn headerText="开    盘" dataField="open" sortable="true" draggable="false" >
+					<mx:itemRenderer>
+                        <mx:Component>
+                        <mx:Label  text="{data.open}"
+                                   styleName="{(data.open >= data.pre) ? 'tradeopencolor1':'tradeopencolor2'}" textAlign="left"/>
+                        </mx:Component>
+                    </mx:itemRenderer>
+				</mx:DataGridColumn>
+				<mx:DataGridColumn headerText="最     高" dataField="high" sortable="true" draggable="false" >
+					<mx:itemRenderer>
+                        <mx:Component>
+                        <mx:Label  text="{data.high}"
+                                   styleName="{(data.high >= data.pre) ? 'tradehigh1':'tradehigh2'}" textAlign="left"/>
+                        </mx:Component>
+                    </mx:itemRenderer>
+				</mx:DataGridColumn>
+				<mx:DataGridColumn headerText="最     低" dataField="low" sortable="true" draggable="false" >
+					<mx:itemRenderer>
+                        <mx:Component>
+                        <mx:Label  text="{data.low}"
+                                   styleName="{(data.low >= data.pre) ? 'tradelow1':'tradelow2'}" textAlign="left"/>
+                        </mx:Component>
+                    </mx:itemRenderer>
+				</mx:DataGridColumn>
+			</mx:columns>	
+</mx:DataGrid>
+</mx:Canvas>
+<mx:Canvas width="100%" height="100%">
+<mx:DataGrid id="stockrankgrid" x="0" y="0" height="100%" width="100%" styleName="selfstocklist" verticalScrollPolicy="auto" doubleClickEnabled="true" rowHeight="{_rowHeight}" headerHeight="{_rowHeight}" dataProvider="{_stockrankList}">
+			<mx:columns>
+				<mx:DataGridColumn headerText="股票代码" dataField="code" sortable="true" draggable="false" />
+				<mx:DataGridColumn headerText="股票名称" dataField="name" sortable="true" draggable="false" />
+				<mx:DataGridColumn headerText="涨    幅" dataField="zhangfu" sortable="true" draggable="false" >
+					<mx:itemRenderer>
+                        <mx:Component>
+                        <mx:Label  text="{data.zhangfu}"
+                                   styleName="{(data.zhangfu>=0) ? 'tradeItem1':'tradeItem2'}" textAlign="left"/>
+                        </mx:Component>
+                    </mx:itemRenderer>
+				</mx:DataGridColumn>
+				<mx:DataGridColumn headerText="现    价" dataField="newp" sortable="true" draggable="false" sortCompareFunction="NumberCompare" >
+					<mx:itemRenderer>
+                        <mx:Component>
+                        <mx:Label  text="{data.newp}"
+                                   styleName="{(data.zhangfu>=0) ? 'tradeItem1':'tradeItem2'}" textAlign="left"/>
+                        </mx:Component>
+                    </mx:itemRenderer>
+				</mx:DataGridColumn>
+				<mx:DataGridColumn headerText="现     手" dataField="newvol" sortable="true" draggable="false" >
+					<mx:itemRenderer>
+                        <mx:Component>
+                        <mx:Label  text="{data.newvol}"
+                                   styleName="{(data.volclass > 4) ? 'tradenewvol1':'tradenewvol2'}" textAlign="left"/>
+                        </mx:Component>
+                    </mx:itemRenderer>
+				</mx:DataGridColumn>
+				<mx:DataGridColumn headerText="开    盘" dataField="open" sortable="true" draggable="false" >
+					<mx:itemRenderer>
+                        <mx:Component>
+                        <mx:Label  text="{data.open}"
+                                   styleName="{(data.open >= data.pre) ? 'tradeopencolor1':'tradeopencolor2'}" textAlign="left"/>
+                        </mx:Component>
+                    </mx:itemRenderer>
+				</mx:DataGridColumn>
+				<mx:DataGridColumn headerText="最     高" dataField="high" sortable="true" draggable="false" >
+					<mx:itemRenderer>
+                        <mx:Component>
+                        <mx:Label  text="{data.high}"
+                                   styleName="{(data.high >= data.pre) ? 'tradehigh1':'tradehigh2'}" textAlign="left"/>
+                        </mx:Component>
+                    </mx:itemRenderer>
+				</mx:DataGridColumn>
+				<mx:DataGridColumn headerText="最     低" dataField="low" sortable="true" draggable="false" >
+					<mx:itemRenderer>
+                        <mx:Component>
+                        <mx:Label  text="{data.low}"
+                                   styleName="{(data.low >= data.pre) ? 'tradelow1':'tradelow2'}" textAlign="left"/>
+                        </mx:Component>
+                    </mx:itemRenderer>
+				</mx:DataGridColumn>
+			</mx:columns>
+</mx:DataGrid>	
+</mx:Canvas>
+</mx:ViewStack>
+</mx:Canvas>

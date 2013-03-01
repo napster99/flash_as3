@@ -1,0 +1,727 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mx:VBox xmlns:mx="http://www.adobe.com/2006/mxml" width="100%" height="100%" xmlns:com="com.*" paddingBottom="0" paddingTop="0" verticalGap="0" implements="com.IDoKey" horizontalScrollPolicy="off" verticalScrollPolicy="off" doubleClickEnabled="true">
+<mx:Script>
+	<![CDATA[
+		import vo.StockVO;
+		import flash.utils.setTimeout;
+		import flashq.server.vo.KlineVO;
+		import mx.collections.ArrayCollection;
+		import events.KlineEvent;
+		import mx.controls.Alert;
+		import mx.charts.chartClasses.Series;
+		import mx.controls.VRule;
+		import mx.charts.chartClasses.IAxis;
+		import utility.App;
+		import mx.charts.HitData;
+		import vo.KChartVO;
+		import flashq.server.tools.DataTable;
+		import flashq.server.IHqServer;
+		import flashq.server.events.ServerEvent;
+		private var hqServer:IHqServer;
+		
+		private var _kline_Params:Object={code:600000,index:5,begin:0,count:10};
+		
+		[Bindable]
+		private var _klineList:ArrayCollection;//k线用到的数据
+		private var _storeList:Array=new Array();//本地存储的数据
+		
+		private var _viewEnd:int=0;//界面显示的开始时间
+		private var _viewCount:int=32;//界面显示的K线个数
+    	private var kpos:Number=0;
+		
+    	private static var _ratio:Number=1.2;//比例
+    	private static var _kindexName:Array = ["1分钟","5分钟","15分钟","30分钟","60分钟","日线","周线","月线"];
+    	private static var TECHTYPE:Object = {MACD:'MACD',KDJ:'KDJ',RSI:'RSI'};
+    	private var _selectedTech="";//选中的tech线类型
+    	private var _VOLSeries:Array;//成交量层
+    	private var _MACDSeries:Array;//MACD层
+    	private var _KDJSeries:Array;//KDJ层
+    	private var _RSISeries:Array;//RSI层
+    	private var _fix:int=2;
+		
+		public function init(server:IHqServer, code:String):void
+		{
+			hqServer = server;
+			hqServer.addEventListener(ServerEvent.KLINE_READY,klineHandler);
+			hqServer.addEventListener(ServerEvent.KLINE_PUSH_READY,klinePushHandler);
+			hqServer.addEventListener(ServerEvent.TECH_READY,techHandler);
+			this.addEventListener(MouseEvent.MOUSE_MOVE,mouseMoveHandler);
+			
+			
+			_kline_Params.code=code;
+        	var stockinfo:StockVO=App.getStock(code);
+        	if(stockinfo == null)
+        		lbname.text ="";
+        	else
+        		lbname.text = stockinfo.name;
+        	lbcode.text = code;
+        	
+        	initTech();
+		}
+		
+		private function initTech():void
+		{
+			//初始化成交量的层
+			initVolSeries();
+			//初始化MACD的层
+	        initMACDSeries();
+	        //初始化KDJ的层
+	        initKDJSeries();
+	        //初始化RSI的层
+	        initRSISeries();
+	        
+	        //初始化右键菜单
+			initTechMenu();
+		}
+		
+		private function initVolSeries():void
+		{
+			_VOLSeries=new Array();
+			_VOLSeries.push(cjSeries);
+		}
+		
+		private function initMACDSeries():void
+		{
+			_MACDSeries=new Array();
+        	var series1:LineSeries = new LineSeries();
+	        series1.yField="diff";
+	        series1.displayName="DIFF";
+	        series1.setStyle('lineStroke', new Stroke(0x000000, 1, 1));
+	        _MACDSeries.push(series1);
+	        
+	        var series2:LineSeries = new LineSeries();
+	        series2.yField="dea";
+	        series2.displayName="DEA";
+	        series2.setStyle('lineStroke', new Stroke(0xFF8040, 1, 1));
+	        _MACDSeries.push(series2);
+	        
+	        var series3:ColumnSeries= new ColumnSeries();
+	        series3.yField = "macd";
+	        series3.displayName="MACD";
+	        series3.setStyle('itemRenderer',new ClassFactory(com.MacdRenderer));
+	        _MACDSeries.push(series3);
+		}
+		
+		private function initKDJSeries():void
+		{
+			_KDJSeries=new Array();
+	        var series1:LineSeries = new LineSeries();
+	        series1.yField="k";
+	        series1.displayName="K";
+	        series1.setStyle('lineStroke', new Stroke(0xF0F888, 1, 1));
+	        _KDJSeries.push(series1);
+	        
+	        var series2:LineSeries = new LineSeries();
+	        series2.yField="d";
+	        series2.displayName="D";
+	        series2.setStyle('lineStroke', new Stroke(0x54FCFC, 1, 1));
+	        _KDJSeries.push(series2);
+	        
+	        var series3:LineSeries = new LineSeries();
+	        series3.yField="j";
+	        series3.displayName="J";
+	        series3.setStyle('lineStroke', new Stroke(0xFF80FF, 1, 1));
+	        _KDJSeries.push(series3);
+		}
+		
+		private function initRSISeries():void
+		{
+			_RSISeries=new Array();
+	        var series1:LineSeries = new LineSeries();
+	        series1.yField="rsi6";
+	        series1.displayName="RSI6";
+	        series1.setStyle('lineStroke', new Stroke(0xCC9933, 1, 1));
+	        _RSISeries.push(series1);
+	        
+	        var series2:LineSeries = new LineSeries();
+	        series2.yField="rsi12";
+	        series2.displayName="RSI12";
+	        series2.setStyle('lineStroke', new Stroke(0x008040, 1, 1));
+	        _RSISeries.push(series2);
+	        
+	        var series3:LineSeries = new LineSeries();
+	        series3.yField="rsi24";
+	        series3.displayName="RSI24";
+	        series3.setStyle('lineStroke', new Stroke(0x0000FF, 1, 1));
+	        _RSISeries.push(series3);
+		}
+		
+		private function initTechMenu():void
+		{
+			var myContextMenu : ContextMenu = new ContextMenu();
+		    var Cm  : ContextMenuItem = new ContextMenuItem("成交量线");
+		    var Cm1 : ContextMenuItem = new ContextMenuItem("MACD");
+			var Cm2 : ContextMenuItem = new ContextMenuItem("KDJ");
+			var Cm3 : ContextMenuItem = new ContextMenuItem("RSI");
+		    myContextMenu.customItems.push(Cm, Cm1, Cm2, Cm3);
+		    
+		    Cm.addEventListener(ContextMenuEvent.MENU_ITEM_SELECT,showVol);
+		    Cm1.addEventListener(ContextMenuEvent.MENU_ITEM_SELECT,showMacd);
+		    Cm2.addEventListener(ContextMenuEvent.MENU_ITEM_SELECT,showKdj);
+		    Cm3.addEventListener(ContextMenuEvent.MENU_ITEM_SELECT,showRsi);
+		    
+		    myContextMenu.hideBuiltInItems();
+		    columnchart2.contextMenu = myContextMenu;
+		}
+		
+		private function showVol(event:ContextMenuEvent):void{
+			columnchart2.series = _VOLSeries;
+			_selectedTech="";
+		}
+		
+		private function showMacd(event:ContextMenuEvent):void{
+			//请求数据
+			_selectedTech = TECHTYPE.MACD;
+			columnchart2.series = _MACDSeries;
+			requestTech();
+		}
+		
+		private function showKdj(event:ContextMenuEvent):void{
+			//请求数据
+			_selectedTech = TECHTYPE.KDJ;
+			columnchart2.series = _KDJSeries;
+			requestTech();
+		}
+		
+		private function showRsi(event:ContextMenuEvent):void{
+			//请求数据
+			_selectedTech = TECHTYPE.RSI;
+			columnchart2.series = _RSISeries;
+			requestTech();
+		}
+		
+		public function doKey(keyCode:int):void
+		{
+			keyupHandler(keyCode);
+		}
+		
+		private function mouseMoveHandler(event:MouseEvent):void
+		{
+			drawAxisLine();
+		}
+		
+		private function klineHandler(event:ServerEvent):void
+		{
+			var dt:DataTable = event.content.table;
+			var attr:Object = event.content.attr;
+			var tmpArray:Array;
+			var i:int=0;
+			var kchartvo:KChartVO;
+			//处理接收到的数据，放在storeDate里
+			//数据为一段段的请求
+			if(_storeList.length == 0)
+			{
+				for(i=0;i<dt.length;i++)
+				{
+					tmpArray=[dt.getString(i,"DATETIME"),dt.getString(i,"OPEN"),dt.getString(i,"HIGH"),
+					dt.getString(i,"LOW"),dt.getString(i,"CLOSE"),dt.getString(i,"VOL"),dt.getString(i,"MONEY"),
+					dt.getString(i,"MA$1"),dt.getString(i,"MA$2"),dt.getString(i,"MA$3"),dt.getString(i,"MA$4"),dt.getString(i,"MA$5")];
+					kchartvo=KChartVO.create(tmpArray);
+					_storeList.push(kchartvo);
+				}
+			}
+			else
+			{
+				var tmplist:Array=new Array();
+				var dtlen:int = dt.length;
+				for(i=0;i<dtlen;i++)
+				{
+					var time:String = dt.getString(i,"DATETIME");
+					if(timeExist(_storeList,time) != -1) continue;
+					tmpArray=[dt.getString(i,"DATETIME"),dt.getString(i,"OPEN"),dt.getString(i,"HIGH"),
+					dt.getString(i,"LOW"),dt.getString(i,"CLOSE"),dt.getString(i,"VOL"),dt.getString(i,"MONEY"),
+					dt.getString(i,"MA$1"),dt.getString(i,"MA$2"),dt.getString(i,"MA$3"),dt.getString(i,"MA$4"),dt.getString(i,"MA$5")];
+					kchartvo=KChartVO.create(tmpArray);
+					tmplist.push(kchartvo);
+				}
+				while(_storeList.length > 0)
+					tmplist.push(_storeList.shift());
+				_storeList=tmplist;
+			}
+			//初始化要显示的数据
+			initViewData();
+		}
+		
+		private function klinePushHandler(event:ServerEvent):void
+		{
+			
+		}
+		private function techHandler(event:ServerEvent):void
+		{
+			var dt:DataTable = event.content.table;
+			var attr:Object = event.content.attr;
+			var storeIdx:int;
+			for(var i:int=0;i<dt.length;i++)
+			{
+				storeIdx = timeExist(_storeList,dt.getString(i,"DATETIME"));
+				if(storeIdx == -1) continue;
+				var kvo:KChartVO=_storeList[storeIdx] as KChartVO;
+				if(_selectedTech == TECHTYPE.MACD)
+				{
+					kvo.diff = dt.getNumber(i,"DIFF");
+					kvo.dea =  dt.getNumber(i,"DEA");
+					kvo.macd =  dt.getNumber(i,"MACD");
+				}
+				else if(_selectedTech == TECHTYPE.KDJ)
+				{
+					kvo.k = dt.getNumber(i,"K");
+					kvo.d = dt.getNumber(i,"D");
+					kvo.j = dt.getNumber(i,"J");
+				}
+				else if(_selectedTech == TECHTYPE.RSI)
+				{
+					kvo.rsi6 = dt.getNumber(i,"RSI$1");
+					kvo.rsi12 = dt.getNumber(i,"RSI$2");
+					kvo.rsi24 = dt.getNumber(i,"RSI$3");
+				}
+		   	}
+		   	_klineList.refresh();
+		}
+		
+		//请求数据,分析数据,可能不需要请求新数据
+		private function requestDate():void
+		{
+			if((_storeList.length - _viewEnd)>_viewCount)
+			{
+				//有数据，直接显示出来
+				initViewData();
+				requestTech();
+			}
+			else
+			{
+				//请求更多显示数据
+				if(_storeList.length == 0)
+					_kline_Params.begin = '0';
+				else
+					_kline_Params.begin = KChartVO(_storeList[0]).date;
+				_kline_Params.count = _viewCount;
+				if(App.isIndex(_kline_Params.code))
+					hqServer.requestIndexKline(_kline_Params);			
+				else
+					hqServer.requestStockKline(_kline_Params);
+				setTimeout(requestTech,100);
+			}
+		}
+		
+		private function requestTech():void
+		{
+			if(_selectedTech!="")
+			{
+				hqServer.requestTech({
+					index:_kline_Params.index,
+					code:_kline_Params.code,
+					count:_viewCount,
+					begin:_kline_Params.begin == '0' ? '0' : KChartVO(_storeList[_storeList.length-1-_viewEnd]).date,
+					curve:_selectedTech});
+			}
+		}
+		
+		private function initViewData():void
+		{
+			_klineList=new ArrayCollection();
+			var baseIdx:int = _storeList.length-_viewEnd-_viewCount;
+			if(baseIdx<0) baseIdx = 0;
+			for(var i:int=0;i<_viewCount;i++)//可能出现请求的数据不足的情况
+			{
+				if(_storeList[baseIdx+i]==null) break;
+				_klineList.addItem(_storeList[baseIdx+i]);
+			}
+			bindData();
+			drawAxisLine(false);
+		}
+		
+		private function bindData():void
+		{
+			lbkindex.text = _kindexName[_kline_Params.index];
+		}
+		
+        public function switchView(code:String):void
+        {
+        	_kline_Params.code = code;
+        	var stockinfo:StockVO=App.getStock(code);
+        	if(stockinfo == null)
+        		lbname.text ="";
+        	else
+        		lbname.text = stockinfo.name;
+        	lbcode.text = code;
+        	resetKState();
+        	requestDate();
+        	_fix = App.getFix(stockinfo);
+        }
+        
+        public function kdataTipFunc(hd:HitData):String
+		{
+			var date:String=hd.item['date']
+		  	var open:String=hd.item['open'];
+		  	var close:String=hd.item['close'];
+		  	var high:String=hd.item['high'];
+		  	var low:String=hd.item['low'];
+		  	
+		  	
+		  	return "<FONT SIZE='10'><B>日期：</B>"+date+"<br><B>开盘：</B>"+open+"<br><B>最高：</B>"+high+"<br><B>最低：</B>"+low+"<br><B>收盘：</B>"+close+"</FONT>";
+		} 
+        
+		private function keyupHandler(keyCode:int):void
+		{
+			if(keyCode == App.KeyCode.LEFT)
+				moveLeft();
+			else if(keyCode == App.KeyCode.RIGHT)
+				moveRight();
+			else if(keyCode == App.KeyCode.UP)
+				zoomIn();
+			else if(keyCode == App.KeyCode.DOWN)
+				zoomOut();
+//			else if(keyCode == App.KeyCode.F8)
+//				changeKlineIndex();
+//			else if(keyCode == App.KeyCode.ENTER)
+//			{
+//				var evt:KlineEvent=new KlineEvent(KlineEvent.KLineDBClick);
+//				evt.code = _kline_Params.code;
+//				dispatchEvent(evt);
+//			}
+		}
+		
+        private function zoomIn():void
+        {
+        	_viewCount = int(_viewCount/_ratio);
+        	if(_viewCount < 6) _viewCount=6;
+        	requestDate();
+        }
+        
+        private function zoomOut():void
+        {
+        	_viewCount = int(_viewCount*_ratio);
+        	requestDate();
+        }
+        
+        private function moveRight():void
+        {
+        	kpos++;
+        	if(kpos >= _viewCount) 
+        	{
+        		kpos = _viewCount-1;
+        		_viewEnd--;
+        		if(_viewEnd<0) _viewEnd = 0;
+        		else if(_viewEnd > (_storeList.length - _viewCount)) _viewEnd=_storeList.length - _viewCount;
+        	}
+        	requestDate();
+        }
+        
+        private function moveLeft():void
+        {
+        	kpos--;
+        	if(kpos < 0)
+        	{
+	        	kpos=0;
+	        	_viewEnd++;
+        	}
+        	requestDate();
+        }
+        
+        //改变K线的类型：1分钟，5分钟,15分钟,30分钟,60分钟,日线，周线，月线
+        private function changeKlineIndex():void
+        {
+        	_kline_Params.index++;
+        	if(_kline_Params.index>7) 
+        		_kline_Params.index=0;
+        	resetKState();
+        	requestDate();
+        }
+        
+        public function setKlineIndex(i:int):void
+        {
+        	_kline_Params.index=i;
+        }
+        
+        private function resetKState():void
+        {
+        	_storeList=new Array();//重置存储的数据
+        	_viewCount = 32;
+        	_viewEnd = 0;
+        }
+        
+        //画线
+        private function drawAxisLine(ismouse:Boolean=true):void
+        {
+        	if(ismouse)
+        	{
+	        	var p:Point = new Point(candlestickchart1.mouseX,candlestickchart1.mouseY);
+				var d:Array = candlestickchart1.localToData(p);
+				kpos=getNumericChartValue(d[0],khorAxis).numericValue;
+        	}
+			if(isNaN(kpos)) return;
+			if(kpos >= _klineList.length)kpos=_klineList.length-1;
+			kdrawLine();
+        }
+        
+		public function kdrawLine():void
+		{
+			//k线白线
+			klinesCanvas.removeAllChildren();
+			klinesCanvas1.removeAllChildren();
+			
+			var thePosition:Point = chartToScreen(kpos, 0, khorSeries);              
+			
+			var theLine:VRule = VRule(klinesCanvas.addChild(new VRule()));
+			theLine.x = thePosition.x;
+			theLine.y = 0;
+			theLine.height = klinesCanvas.height;
+			
+			//成交量白线
+			
+			var theLine1:VRule = VRule(klinesCanvas1.addChild(new VRule()));
+			theLine1.x = thePosition.x;
+			theLine1.y = 0;
+			theLine1.height = klinesCanvas1.height;
+			
+			try{
+				var MAVO:KChartVO=KChartVO(_klineList.getItemAt(kpos));
+				lbMA5.text=( !MAVO["MA$1"] || isNaN(MAVO["MA$1"]) )?"":MAVO.MA$1.toFixed(2);
+				lbMA10.text=( !MAVO["MA$2"] || isNaN(MAVO["MA$2"]) )?"":MAVO.MA$2.toFixed(2);
+				lbMA20.text=( !MAVO["MA$3"] || isNaN(MAVO["MA$3"]) )?"":MAVO.MA$3.toFixed(2);
+				lbMA30.text=( !MAVO["MA$4"] || isNaN(MAVO["MA$4"]) )?"":MAVO.MA$4.toFixed(2);
+			}
+			catch(error:*)
+			{
+				Alert.show(kpos.toString() + "  - " + _klineList.length);
+			}
+		}
+        
+		//根据坐标值获取pos
+		public function getNumericChartValue(inValue:String, theAxis:IAxis):Object
+		{
+			var axisCache:Array = new Array({inValue: inValue})	        	
+			if(!(theAxis is LinearAxis))
+			{
+				theAxis.mapCache(axisCache, "inValue", "outValue", true);
+				return {numericValue: axisCache[0].outValue}
+			}
+			else
+			{
+				return {numericValue: Number(inValue)};
+			}
+		}
+        public function chartToScreen(chartX:Number, chartY:Number, theSeries:Series):Point
+		{
+			var tmpCache:Array = new Array({chartX:chartX, chartY:chartY});
+			if(theSeries) 
+			{
+				theSeries.dataTransform.transformCache(tmpCache, "chartX", "screenX", "chartY", "screenY");
+			}
+			return new Point(Math.round(tmpCache[0].screenX), Math.round(tmpCache[0].screenY));
+        	
+		}
+		
+		[Bindable(event="styleChanged")]
+		private function getcolor(name:String):*
+		{
+			return StyleManager.getStyleDeclaration(name).getStyle('color');
+		}
+		
+		public function resetStyle():void
+		{
+			dispatchEvent(new Event("styleChanged"));
+		}
+		
+		private function timeExist(list:Array,time:String):int
+		{
+			var tmpitem:KChartVO;
+			for(var i:int=0;i<list.length;i++)
+			{
+				tmpitem = list[i] as KChartVO;
+				if(tmpitem.date == time)
+				{
+					return i;
+				}
+			}
+			return -1;
+		}
+  		//格式化价格
+		private function priceLabel(item:Object, prevValue:Object, axis:IAxis):String {
+            return Number(item).toFixed(_fix);
+  		}
+	]]>
+</mx:Script>
+<mx:HBox height="20" fontSize="10" horizontalScrollPolicy="off" verticalScrollPolicy="off">
+<mx:Spacer width="10" />
+<mx:Label id="lbname" height="100%" fontSize="12" styleName="stockbuysell"/>
+<mx:Label id="lbcode" height="100%" fontSize="12" styleName="stockbuysell"/>
+<mx:Label text=""  styleName="stockbuysell" id="lbkindex" />
+<mx:Label text="MA5:" color="{getcolor('.klineStroke11')}"/>
+<mx:Label text="" id="lbMA5" color="{getcolor('.klineStroke11')}" fontSize="10"  />
+<mx:Label text="MA10:" color="{getcolor('.klineStroke12')}"/>
+<mx:Label text="" id="lbMA10"   color="{getcolor('.klineStroke12')}" fontSize="10"  />
+<mx:Label text="MA20:" color="{getcolor('.klineStroke13')}" />
+<mx:Label text="" id="lbMA20" color="{getcolor('.klineStroke13')}" fontSize="10" />
+<mx:Label text="MA30:" color="{getcolor('.klineStroke14')}"/>
+<mx:Label text="" id="lbMA30" color="{getcolor('.klineStroke14')}" fontSize="10"  />
+</mx:HBox>
+<mx:VBox height="100%" width="100%" verticalGap="0" paddingBottom="0" paddingTop="0">
+<mx:CandlestickChart id="candlestickchart1" styleName="klinecandlestickchart" showDataTips="true" dataTipFunction="kdataTipFunc" height="80%" width="100%" gutterLeft="40" gutterRight="2" paddingBottom="0" gutterTop="0" gutterBottom="0" dataTipRenderer="{com.ChartDataTip}" dataProvider="{_klineList}">
+ 		 <mx:horizontalAxis>
+            <mx:CategoryAxis  categoryField="date"  id="khorAxis"/>
+        </mx:horizontalAxis>
+        <mx:horizontalAxisRenderer>
+        	<mx:AxisRenderer showLabels="false" tickPlacement="none" styleName="klineStroke1">
+        		<mx:axisStroke>
+            		<mx:Stroke weight="1" color="{getcolor('.klineStroke1')}" caps="none" />
+            	</mx:axisStroke>
+        	</mx:AxisRenderer>
+        </mx:horizontalAxisRenderer>
+		<mx:secondHorizontalAxis>
+        	<mx:CategoryAxis   id="khorAxis1"/>
+        </mx:secondHorizontalAxis>
+        <mx:secondHorizontalAxisRenderer>
+        	<mx:AxisRenderer showLabels="false" tickPlacement="none">
+        		<mx:axisStroke>
+            		<mx:Stroke weight="1" color="{getcolor('.klineStroke2')}" caps="none" />
+            	</mx:axisStroke>
+        	</mx:AxisRenderer>
+        </mx:secondHorizontalAxisRenderer>
+        
+		<mx:verticalAxis>
+            <mx:LinearAxis baseAtZero="false" labelFunction="priceLabel"  />
+        </mx:verticalAxis>
+  
+		<mx:verticalAxisRenderer>
+            <mx:AxisRenderer  tickPlacement="none">
+            	<mx:axisStroke>
+            		<mx:Stroke weight="1" color="{getcolor('.klineStroke3')}" caps="none" />
+            	</mx:axisStroke>
+            </mx:AxisRenderer>
+        </mx:verticalAxisRenderer>
+        
+        <mx:secondVerticalAxis >
+        	<mx:LinearAxis baseAtZero="false" />
+        </mx:secondVerticalAxis>
+  
+		<mx:secondVerticalAxisRenderer>
+            <mx:AxisRenderer  tickPlacement="none" showLabels="false">
+            	<mx:axisStroke>
+            		<mx:Stroke weight="1" color="{getcolor('.klineStroke4')}" caps="none" />
+            	</mx:axisStroke>
+            </mx:AxisRenderer>
+        </mx:secondVerticalAxisRenderer>
+        
+        <mx:series>
+            <com:KchartSeries openField="open" highField="high" lowField="low" closeField="close" id="khorSeries">
+        		<com:fill>
+        			<mx:SolidColor color="{getcolor('.klineStroke5')}"/>
+        		</com:fill>
+        		<com:declineFill>
+        			<mx:SolidColor color="{getcolor('.klineStroke6')}"/>
+        		</com:declineFill>
+        		<com:stroke>
+        			<mx:Stroke color="{getcolor('.klineStroke7')}" weight="1" />
+        		</com:stroke>
+        		<com:boxStroke>
+        			<mx:Stroke color="{getcolor('.klineStroke8')}" weight="1" />
+        		</com:boxStroke>
+        		<com:dstroke>
+        			<mx:Stroke color="{getcolor('.klineStroke9')}" weight="1"/>
+        		</com:dstroke>
+        		<com:dboxStroke>
+        			<mx:Stroke color="{getcolor('.klineStroke10')}" weight="1"/>
+        		</com:dboxStroke>
+        	</com:KchartSeries>
+        	
+        	<mx:LineSeries displayName="MA5" yField="MA$1"  form="curve">
+				<mx:lineStroke>
+					<mx:Stroke weight="1" color="{getcolor('.klineStroke11')}" alpha="1" />
+				</mx:lineStroke>
+			</mx:LineSeries>
+			<mx:LineSeries displayName="MA10" yField="MA$2" form="curve" >
+				<mx:lineStroke>
+					<mx:Stroke weight="1" color="{getcolor('.klineStroke12')}" alpha="1" />
+				</mx:lineStroke>
+			</mx:LineSeries>
+			<mx:LineSeries displayName="MA20" yField="MA$3" form="curve" >
+				<mx:lineStroke>
+					<mx:Stroke weight="1" color="{getcolor('.klineStroke13')}" alpha="1" />
+				</mx:lineStroke>
+			</mx:LineSeries>
+			<mx:LineSeries displayName="MA30" yField="MA$4" form="curve">
+				<mx:lineStroke>
+					<mx:Stroke weight="1" color="{getcolor('.klineStroke14')}" alpha="1" />
+				</mx:lineStroke>
+			</mx:LineSeries>
+        </mx:series>
+     
+   		<mx:backgroundElements>
+            <mx:Array>
+        <com:DotGridLines direction="horizontal" horizontalChangeCount="12" verticalChangeCount="30" midbold="false">
+	        <com:horizontalStroke>
+	            <mx:Stroke weight="0"  color="{getcolor('.klineStroke15')}" alpha=".5"/>
+	        </com:horizontalStroke>
+        </com:DotGridLines>
+            </mx:Array>
+        </mx:backgroundElements>
+   		<mx:annotationElements>
+			<mx:Canvas id="klinesCanvas" horizontalScrollPolicy="off" verticalScrollPolicy="off"  />
+		</mx:annotationElements>
+		
+</mx:CandlestickChart>
+
+	<!--成交量图-->
+<mx:ColumnChart id="columnchart2"  seriesFilters="[]"  showDataTips="true" height="20%" width="100%" gutterTop="0" gutterBottom="0" gutterLeft="40" gutterRight="2" styleName="klinecolumnChart" dataProvider="{_klineList}">
+   		<mx:horizontalAxis>
+            <mx:CategoryAxis categoryField="date"/>
+        </mx:horizontalAxis>
+        <mx:horizontalAxisRenderer>
+        	<mx:AxisRenderer canDropLabels="true" showLabels="false" tickPlacement="none" >
+        		<mx:axisStroke>
+            		<mx:Stroke weight="1" color="{getcolor('.klineStroke16')}" caps="none" />
+            	</mx:axisStroke>
+        	</mx:AxisRenderer>
+        </mx:horizontalAxisRenderer> 
+        <mx:secondHorizontalAxis>
+        	<mx:CategoryAxis id="khorAxis2"/>
+        </mx:secondHorizontalAxis>
+        <mx:secondHorizontalAxisRenderer>
+        	<mx:AxisRenderer showLabels="false" tickPlacement="none">
+        		<mx:axisStroke>
+            		<mx:Stroke weight="1" color="{getcolor('.klineStroke17')}" caps="none" />
+            	</mx:axisStroke>
+        	</mx:AxisRenderer>
+        </mx:secondHorizontalAxisRenderer>
+        
+        <mx:verticalAxisRenderer>
+            <mx:AxisRenderer showLabels="false" tickPlacement="none">
+            	<mx:axisStroke>
+            		<mx:Stroke weight="1" color="{getcolor('.klineStroke18')}" caps="none" />
+            	</mx:axisStroke>
+            </mx:AxisRenderer>
+        </mx:verticalAxisRenderer> 
+        
+        <mx:secondVerticalAxis >
+        	<mx:LinearAxis baseAtZero="false"/>
+        </mx:secondVerticalAxis>
+  
+		<mx:secondVerticalAxisRenderer>
+            <mx:AxisRenderer showLabels="false" tickPlacement="none">
+            	<mx:axisStroke>
+            		<mx:Stroke weight="1" color="{getcolor('.klineStroke19')}" caps="none" />
+            	</mx:axisStroke>
+            </mx:AxisRenderer>
+        </mx:secondVerticalAxisRenderer>  
+     	<mx:series>
+   			<mx:ColumnSeries id="cjSeries" displayName="成交量" yField="vol"  itemRenderer="com.ColorColumnChartRenderer">
+   			</mx:ColumnSeries>
+   		</mx:series>
+   		
+   		<mx:backgroundElements>
+            <mx:Array>
+                 <com:DotGridLines direction="horizontal" horizontalChangeCount="3" verticalChangeCount="30" midbold="false">
+                    <com:horizontalStroke>
+                        <mx:Stroke weight="0"  color="{getcolor('.klineStroke20')}" alpha=".5"  />
+                    </com:horizontalStroke>
+                </com:DotGridLines>
+            </mx:Array>
+        </mx:backgroundElements>
+        
+        <mx:annotationElements>
+			<mx:Canvas id="klinesCanvas1" horizontalScrollPolicy="off" verticalScrollPolicy="off"  />
+		</mx:annotationElements>
+</mx:ColumnChart>
+</mx:VBox>
+</mx:VBox>

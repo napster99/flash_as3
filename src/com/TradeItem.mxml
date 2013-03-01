@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mx:HBox xmlns:mx="http://www.adobe.com/2006/mxml" width="143" height="21" fontFamily="Verdana" horizontalGap="0">
+	<mx:Script>
+		<![CDATA[
+			private function changeLabel(str:Boolean,type:String):String
+			{
+				
+				if(type == '1'){
+					var dt:Date = new Date(Number(data.tradeTime)*1000);
+					var xiaoshi:String = (dt.hours > 9)? dt.hours.toString() : '0'+dt.hours.toString();
+		  			var fenzhong:String= (dt.minutes > 9)? dt.minutes.toString() : '0'+dt.minutes.toString();
+		  			var shijian :String = xiaoshi + ':' +fenzhong;
+					return shijian;
+				}
+				else if(type == '2')
+				{
+					if(String(data.price).length <7)
+						return data.price;
+					return Number(data.price).toFixed(0);
+
+				}
+				else if(type == '3')
+				{
+					if(str){
+						return "<font color='#FF0000'>"+data.count+"<b>↑</b></font>";
+					}
+					else{
+						return "<font color='#42790B'>"+data.count+"<b>↓</b></font>";
+					}
+				}
+				else{
+					return '--';
+				}
+			}
+		]]>
+	</mx:Script>
+	
+	<mx:Text htmlText="{changeLabel(data.flag,'1')}" width="45" fontSize="11"  fontFamily="Verdana"/>
+	<mx:Text htmlText="{changeLabel(data.flag,'2')}" width="44" fontSize="11"  fontFamily="Verdana"/>
+	<mx:Text htmlText="{changeLabel(data.flag,'3')}" width="53" fontSize="11"  textAlign="right" fontFamily="Verdana"/>	
+	
+</mx:HBox>

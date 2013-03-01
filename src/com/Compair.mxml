@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mx:HBox xmlns:mx="http://www.adobe.com/2006/mxml" width="100%" height="100%" xmlns:com="com.*" implements="com.IDoKey">
+	<mx:Script>
+		<![CDATA[
+			import flashq.server.events.ServerEvent;
+			import flashq.server.IHqServer;
+			import flashq.server.SocketServer;
+			import utility.App;
+			
+			private var _server:IHqServer=null;
+			private var _oServer:IHqServer=null;
+			private var _code:String="1A0001";
+			private var _oCode:String="399001";
+			public var _lineType:int=0;
+			
+			public function set oCode(code:String){
+				_oCode=code;
+			}
+			
+			public function get oCode():String{
+				return _oCode;
+			}
+			
+			public function init(server:IHqServer, code:String='1A0001', oCode:String='399001'):void
+			{
+				trace('Compair.init');
+				_server = server;
+				_code=code;
+				_oCode=oCode;
+			}
+			
+			public function activate():void
+			{
+				if(_oServer==null){
+					var serverlist:Array = new Array();
+					for each(var item:XML in App.server)
+					{
+						serverlist.push({host:item.host.toString(),port:item.port.toString()});
+					}
+					_oServer = new SocketServer(serverlist);
+					_oServer.addEventListener(ServerEvent.LOGIN_SUCCESS,loginHandler);
+					_oServer.addEventListener(ServerEvent.CONNECT_SUCCESS,connectHandler);
+				}
+			}
+			
+			public function deactivate():void
+			{
+				compairMinute1.deactivate();
+				compairKline1.deactivate();
+				_oServer.logout(null);
+				_oServer=null;
+			}
+			
+			private function loginHandler(event:ServerEvent):void{
+				compairMinute1.init(_server, _oServer, _code, _oCode);
+				compairKline1.init(_server, _oServer, _code, _oCode);
+				switchView(_oCode);
+			}
+			
+			private function connectHandler(event:ServerEvent):void
+			{
+				_oServer.login(null);
+			}
+			
+			public function switchView(oCode:String):void
+			{
+				trace('Compair.switchView('+oCode+')');
+				viewstack1.selectedIndex = _lineType;
+				_oCode=oCode;
+				
+				if(_lineType==0){
+					compairMinute1.switchView(_oCode);
+				}else if(_lineType==1){
+					compairKline1.switchView(_oCode);
+				}
+			}
+			
+			public function doKey(keyCode:int):void
+			{
+				if(_lineType==1){
+					compairKline1.doKey(keyCode);
+				}
+			}
+			
+			public function setKlineIndex(i:int):void
+			{
+				compairKline1.setKlineIndex(i);
+			}
+		]]>
+	</mx:Script>
+	<mx:ViewStack id="viewstack1" width="100%" height="100%" creationPolicy="all">
+		<com:CompairMinute id="compairMinute1" width="100%" height="100%"></com:CompairMinute>
+		<com:CompairKLine id="compairKline1" width="100%" height="100%"></com:CompairKLine>
+	</mx:ViewStack>
+</mx:HBox>

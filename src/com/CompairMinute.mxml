@@ -1,0 +1,580 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mx:VBox xmlns:mx="http://www.adobe.com/2006/mxml" width="100%" height="100%" implements="com.IDoKey" horizontalScrollPolicy="off" verticalScrollPolicy="off" xmlns:com="com.*">
+<mx:Style>
+	.ChineseFont{
+        fontFamily:"Verdana","宋体";
+        fontSize:12;
+     }
+</mx:Style>
+<mx:Script>
+	<![CDATA[
+		import events.MinuteEvent;
+		
+		import flashq.server.IHqServer;
+		import flashq.server.events.ServerEvent;
+		import flashq.server.tools.DataTable;
+		
+		import mx.charts.HitData;
+		import mx.charts.chartClasses.IAxis;
+		import mx.charts.chartClasses.Series;
+		import mx.collections.ArrayCollection;
+		import mx.controls.VRule;
+		import mx.utils.StringUtil;
+		
+		import utility.App;
+		
+		import vo.CompairMinuteListVO;
+		import vo.MinuteListVO;
+		import vo.StockListVO;
+		import vo.StockVO;
+		
+		[Bindable]
+		private var _xdata:ArrayCollection;
+		private var _minuteMax:Number;
+
+		private var _minuteMin:Number;
+		private var _minuteInt:Number;
+		[Bindable]
+		private var _ycount:int = 6;
+		
+		[Bindable]
+		private var _percentMax:Number;
+		[Bindable]
+		private var _percentMin:Number;
+		
+		private var hqServer:IHqServer;
+		private var hqServer_other:IHqServer;
+		private var _minute_Params:Object;
+		private var _minute_Params_other:Object;
+		[Bindable]
+		private var _minuteList:ArrayCollection;
+		private var _pre:Number;//昨收
+		private var _pre_other:Number;
+		private var _fix:int=2;
+		private var _fix_other:int=2;
+		private var pos:Number;
+		private var pos_other:Number;
+		private var hashTable:Object;
+		private var hashTable_other:Object;
+		
+		[Bindable]
+		private var _legendItem1:String;
+		[Bindable]
+		private var _legendItem2:String;
+		
+		[Bindable]
+		private var _percentInt:Number;
+		
+		private var _codeName:String;
+		private var _codeName_other:String;
+		
+		
+		
+		
+		
+		/*
+		 * 为兼容指数分时，做了一些改动
+		 * 注意junjia既代表股票分时的均价，还代表指数分时的领先 
+		 */
+		public function init(server:IHqServer, oServer:IHqServer, code:String, oCode:String):void
+		{
+			trace('CompairMinute.init');
+			hqServer = server;
+			hqServer_other=oServer;
+			_minuteList=new ArrayCollection();
+			_minute_Params = {code:code};
+			_minute_Params_other = {code:oCode};
+			_fix=2;
+			_fix_other=2;
+			hashTable=new Object();
+			hashTable_other=new Object();
+			
+			
+			hqServer.addEventListener(ServerEvent.MINUTE_READY, minuteHandler);
+			hqServer.addEventListener(ServerEvent.MINUTE_PUSH_READY, minutePushHandler);
+			
+			hqServer_other.addEventListener(ServerEvent.MINUTE_READY,minuteHandler_other);
+			hqServer_other.addEventListener(ServerEvent.MINUTE_PUSH_READY,minutePushHandler_other);
+			//this.addEventListener(MouseEvent.DOUBLE_CLICK,dbclickHandler);
+			this.addEventListener(MouseEvent.MOUSE_MOVE,mouseDrawline);
+			initxdata();
+			
+        	if(App.isIndex(_minute_Params.code))
+        		hqServer.requestIndexMinute(_minute_Params);
+        	else
+	        	hqServer.requestStockMinute(_minute_Params);
+	        	
+	        
+        	var stockinfo:StockVO=App.getStock(code);
+        	if(stockinfo == null){
+        		_legendItem1=code;
+        	}else{
+        		_legendItem1=stockinfo.name+' '+code;
+        		_codeName=stockinfo.name;
+        	}
+			trace('CompairMinute.init: '+_legendItem1);
+		}
+		
+		public function deactivate():void{
+			_minuteList=new ArrayCollection();
+			hashTable=new Object();
+			hashTable_other=new Object();
+			hqServer.removeEventListener(ServerEvent.MINUTE_READY, minuteHandler);
+			hqServer.removeEventListener(ServerEvent.MINUTE_PUSH_READY, minutePushHandler);
+			
+			hqServer_other.removeEventListener(ServerEvent.MINUTE_READY,minuteHandler_other);
+			hqServer_other.removeEventListener(ServerEvent.MINUTE_PUSH_READY,minutePushHandler_other);
+			removeEventListener(MouseEvent.MOUSE_MOVE,mouseDrawline);
+		}
+		
+		
+		private function minuteHandler(event:ServerEvent):void
+		{
+			var dt:DataTable = event.content.table;
+			var attr:Object = event.content.attr;
+			_pre = event.content.pre;
+			var tmpArray:Array;
+			var lastVol:int = 0;
+			
+			for(var n in hashTable){
+				delete hashTable[n];
+			}
+
+			for(var i:int=0;i<dt.length;i++)
+			{
+				var hour:int = int(dt.getValue(i,"DATETIME").substr(6, 2));
+				var minute:int=int(dt.getValue(i,"DATETIME").substr(8, 2));
+				if(hour==9 && minute<30){
+					continue;
+				}
+				
+				var vol:Number = Math.ceil(Number(dt.getValue(i,"VOL"))/100);
+				var newvol:Number = vol - lastVol;
+				lastVol=vol;
+				tmpArray=[dt.getValue(i,"DATETIME"),dt.getValue(i,"最新"),dt.getValue(i,"均价"),
+					dt.getValue(i,"分时涨跌"),dt.getValue(i,"分时涨幅"),dt.getValue(i,"VOL"),newvol.toString(),dt.getValue(i,"领先")];
+				var mlistvo:MinuteListVO=MinuteListVO.create(tmpArray);
+				//trace(mlistvo.toString());
+				hashTable[tmpArray[0]]=mlistvo;
+			}
+			mergeIntoMinuteList();
+			//trace('CompairMinute.minuteHandler: _minuteList.length='+_minuteList.length);
+			measureVars();
+		}
+		
+		private function minuteHandler_other(event:ServerEvent):void
+		{
+			var dt:DataTable = event.content.table;
+			var attr:Object = event.content.attr;
+			_pre_other = event.content.pre;
+			var tmpArray:Array;
+			var lastVol:int = 0;
+			
+			for(var n in hashTable_other){
+				delete hashTable_other[n];
+			}
+
+			for(var i:int=0;i<dt.length;i++)
+			{
+				var hour:int = int(dt.getValue(i,"DATETIME").substr(6, 2));
+				var minute:int=int(dt.getValue(i,"DATETIME").substr(8, 2));
+				if(hour==9 && minute<30){
+					continue;
+				}
+				
+				var vol:Number = Math.ceil(Number(dt.getValue(i,"VOL"))/100);
+				var newvol:Number = vol - lastVol;
+				lastVol=vol;
+				tmpArray=[dt.getValue(i,"DATETIME"),dt.getValue(i,"最新"),dt.getValue(i,"均价"),
+					dt.getValue(i,"分时涨跌"),dt.getValue(i,"分时涨幅"),dt.getValue(i,"VOL"),newvol.toString(),dt.getValue(i,"领先")];
+				var mlistvo:MinuteListVO=MinuteListVO.create(tmpArray);
+				hashTable_other[tmpArray[0]]=mlistvo;
+			}
+			mergeIntoMinuteList();
+			trace('CompairMinute.minuteHander_other: _minuteList.length='+_minuteList.length);
+			measureVars();
+		}
+		
+		private function mergeIntoMinuteList(){
+			var t_minuteList:ArrayCollection=new ArrayCollection();
+			
+			var indexArray:Array=new Array();
+			for(var i in hashTable){
+				indexArray.push(i);
+			}
+			indexArray.sort(Array.NUMERIC);
+			
+			for(i=0; i<indexArray.length; i++){
+				if(hashTable_other[indexArray[i]] is MinuteListVO){
+					var tmp_a:MinuteListVO=hashTable[indexArray[i]];
+					var tmp:CompairMinuteListVO=new CompairMinuteListVO();
+					tmp.time=tmp_a.time;
+					tmp.newp=tmp_a.newp;
+					tmp.junjia=tmp_a.junjia;
+					tmp.zhangdie=tmp_a.zhangdie;
+					tmp.zhangfu=String((Number(tmp_a.newp)-_pre)/_pre*100);
+					tmp.vol=tmp_a.vol;
+					tmp.newvol=tmp_a.newvol;
+					tmp.o_newp=hashTable_other[indexArray[i]].newp;
+					tmp.o_junjia=hashTable_other[indexArray[i]].junjia;
+					tmp.o_zhangdie=hashTable_other[indexArray[i]].zhangdie;
+					tmp.o_zhangfu=String((Number(hashTable_other[indexArray[i]].newp)-_pre_other)/_pre_other*100);
+					tmp.o_vol=hashTable_other[indexArray[i]].vol;
+					tmp.o_newvol=hashTable_other[indexArray[i]].newvol;
+					t_minuteList.addItem(tmp);
+				}
+			}
+			_minuteList=t_minuteList;
+		}
+		
+		private function measureVars():void
+		{
+			var mlvo:CompairMinuteListVO;
+			var newp:Number;
+			var junjia:Number;
+			var zhangfu:Number;
+			var o_zhangfu:Number;
+			
+			var __percentMax:Number=0;
+			var __percentMin:Number=0;
+			
+			if(_minuteList.length > 0)
+			{
+				mlvo=CompairMinuteListVO(_minuteList.getItemAt(0));
+				__percentMax = Number(mlvo.zhangfu);
+				__percentMin = __percentMax;
+				
+				for(var i:int;i<_minuteList.length;i++)
+				{
+					mlvo=CompairMinuteListVO(_minuteList.getItemAt(i));
+					//trace(mlvo.toString());
+					zhangfu=(Number(mlvo.newp)-_pre)/_pre*100;
+					o_zhangfu=(Number(mlvo.o_newp)-_pre_other)/_pre_other*100;
+						
+					if(__percentMax<zhangfu)
+						__percentMax=zhangfu;
+						
+					if(__percentMax<o_zhangfu)
+						__percentMax=o_zhangfu;
+						
+					if(__percentMin>zhangfu)
+						__percentMin=zhangfu;
+					
+					if(__percentMin>o_zhangfu)
+						__percentMin=o_zhangfu;
+				}
+				
+				
+				var diff:Number = Math.max(__percentMax, 0-__percentMin);
+				_percentMax = diff;
+				_percentMin = 0 - diff;
+				_percentInt= _percentMax /_ycount;
+				//if(_minuteInt ==0)_minuteInt =1;
+				trace('CompairMinute.measureVars: '+_percentMin+' '+_percentMax);
+				
+			}
+		}
+		
+		private function minutePushHandler(event:ServerEvent):void
+		{
+			var dt:DataTable = event.content.table;
+			var attr:Object = event.content.attr;
+			var tmpArray:Array;
+			var time:String;
+			var lastVol:int = 0;
+			
+			for(var i:int=0;i<dt.length;i++)
+			{
+				var hour:int = int(dt.getValue(i,"DATETIME").substr(6, 2));
+				var minute:int=int(dt.getValue(i,"DATETIME").substr(8, 2));
+				if(hour==9 && minute<30){
+					continue;
+				}
+				
+				time = dt.getValue(i,"DATETIME").toString();
+				
+				var vol:Number=Math.ceil(Number(dt.getValue(i,"VOL"))/100);
+				if(hashTable[String(Number(time)-1)] is MinuteListVO){
+					lastVol= Number(hashTable[String(Number(time)-1)].vol)/100;
+				}
+				var newvol:Number = vol - lastVol;
+				lastVol=vol;
+				tmpArray=[dt.getValue(i,"DATETIME"),dt.getValue(i,"最新"),dt.getValue(i,"均价"),
+					dt.getValue(i,"分时涨跌"),dt.getValue(i,"分时涨幅"),dt.getValue(i,"VOL"),newvol.toString(),dt.getValue(i,"领先")];
+				var mlistvo:MinuteListVO=MinuteListVO.create(tmpArray);
+				trace(mlistvo.toString());
+				hashTable[time]=mlistvo;
+			}
+			mergeIntoMinuteList();
+			//trace('CompairMinute.minutePushHandler: _minuteList.length='+_minuteList.length);
+			measureVars();
+		}
+		
+		private function minutePushHandler_other(event:ServerEvent):void
+		{
+			var dt:DataTable = event.content.table;
+			var attr:Object = event.content.attr;
+			var tmpArray:Array;
+			var time:String;
+			var lastVol:int = 0;
+			
+			for(var i:int=0;i<dt.length;i++)
+			{
+				var hour:int = int(dt.getValue(i,"DATETIME").substr(6, 2));
+				var minute:int=int(dt.getValue(i,"DATETIME").substr(8, 2));
+				if(hour==9 && minute<30){
+					continue;
+				}
+				
+				time = dt.getValue(i,"DATETIME").toString();
+				
+				var vol:Number=Math.ceil(Number(dt.getValue(i,"VOL"))/100);
+				if(hashTable_other[String(Number(time)-1)] is MinuteListVO){
+					lastVol= Number(hashTable_other[String(Number(time)-1)].vol)/100;
+				}
+				var newvol:Number = vol - lastVol;
+				lastVol=vol;
+				tmpArray=[dt.getValue(i,"DATETIME"),dt.getValue(i,"最新"),dt.getValue(i,"均价"),
+					dt.getValue(i,"分时涨跌"),dt.getValue(i,"分时涨幅"),dt.getValue(i,"VOL"),newvol.toString(),dt.getValue(i,"领先")];
+				var mlistvo:MinuteListVO=MinuteListVO.create(tmpArray);
+				hashTable_other[time]=mlistvo;
+			}
+			mergeIntoMinuteList();
+			trace('CompairMinute.minutePushHandler_other: _minuteList.length='+_minuteList.length);
+			measureVars();
+		}
+		
+     	public function mouseDrawline(e:MouseEvent):void
+        {	
+        	var p:Point = new Point(minuteLinechart.mouseX,minuteLinechart.mouseY);
+			var d:Array = minuteLinechart.localToData(p);
+			pos=getNumericChartValue(d[0],horAxis).numericValue;
+			if(isNaN(pos)) pos=0;
+			drawLine(pos);
+        }
+        
+        		//分时图画线
+		public function drawLine(pos:Number):void
+		{	/*
+			if(pos >= fschartdata.length){
+				return;
+			}
+			*/
+			//k线白线
+			linesCanvas.removeAllChildren();
+//			linesCanvas1.removeAllChildren();
+			
+			var thePosition:Point = chartToScreen(pos, 0, horSeries);              
+			var theLine:VRule = VRule(linesCanvas.addChild(new VRule()));
+			theLine.x = thePosition.x;
+			theLine.y = 0;
+			theLine.height = linesCanvas.height;
+			
+			
+			//成交量白线
+			
+//			var theLine1:VRule = VRule(linesCanvas1.addChild(new VRule()));
+//			theLine1.x = thePosition.x;
+//			theLine1.y = 0;
+//			theLine1.height = linesCanvas1.height;
+
+		}
+        public function chartToScreen(chartX:Number, chartY:Number, theSeries:Series):Point
+		{
+			var tmpCache:Array = new Array({chartX:chartX, chartY:chartY});
+			if(theSeries) 
+			{
+				theSeries.dataTransform.transformCache(tmpCache, "chartX", "screenX", "chartY", "screenY");
+			}
+			return new Point(Math.round(tmpCache[0].screenX), Math.round(tmpCache[0].screenY));
+        	
+		}
+		//根据坐标值获取pos
+		public function getNumericChartValue(inValue:String, theAxis:IAxis):Object
+		{
+			var axisCache:Array = new Array({inValue: inValue})	        	
+
+			return {numericValue: Number(inValue)};
+
+		}
+		
+		public function doKey(keyCode:int):void
+		{
+			if(keyCode == App.KeyCode.ENTER)
+			{
+				dbclickHandler(null);
+			}
+		}
+		
+		private function dbclickHandler(event:MouseEvent):void
+		{
+			var evt:MinuteEvent=new MinuteEvent(MinuteEvent.MinuteDBClick);
+			evt.code = _minute_Params.code;
+			dispatchEvent(evt);
+		}
+		
+		private function timeExist(list:ArrayCollection,time:String):int
+		{
+			var tmpitem:MinuteListVO;
+			for(var i:int=0;i<list.length;i++)
+			{
+				tmpitem = list.getItemAt(i) as MinuteListVO;
+				if(tmpitem.time == time)
+				{
+					return i;
+				}
+			}
+			return -1;
+		}
+		
+        //初始化分时x坐标
+        public function initxdata():void{
+        	_xdata = new ArrayCollection();
+			for (var i:Number = 9; i < 15; i++){
+				
+				for(var j:Number=0;j<60;j++){
+					if((i==9 && j<30) || (i==11 && j>30) || i==12){
+						continue;
+					}
+					var xh:String = (i==9)? '0'+i.toString() : i.toString();
+					var xm:String = (j<10)? '0'+j.toString() : j.toString();
+					var xitem:String=xh+":"+xm;
+					_xdata.addItem(xitem);
+				}
+			}
+			_xdata.addItem("15:00");
+        }
+        
+        public function switchView(code:String):void
+        {
+        	_minute_Params_other.code = code;
+        	if(App.isIndex(code))
+        		hqServer_other.requestIndexMinute(_minute_Params_other);
+        	else
+	        	hqServer_other.requestStockMinute(_minute_Params_other);
+	        
+        	var stockinfo:StockVO=App.getStock(code);
+        	if(stockinfo == null){
+        		_legendItem2=code;
+        	}else{
+        		_codeName_other=stockinfo.name;
+        		_legendItem2=stockinfo.name+' '+code;
+        	}
+        }
+        
+		public function MinuteTip(hd:HitData):String
+		{
+
+
+			trace('minuteTip :'+hd.contextColor);
+			
+		  	var xianjia:Number=hd.item['newp'];
+		  	var junjia:Number=hd.item['junjia'];
+		  	var xianshou:String=hd.item['newvol'];
+		  	var zhangfu:String = Number(hd.item['zhangfu']).toFixed(3);
+		  	var zhangdie:String = (Number(xianjia) - _pre).toFixed(3);
+		  	var color:String = (Number(xianjia) >= _pre)? '#FF0000' : '#42790B';
+		  	
+		  	var o_xianjia:Number=hd.item['o_newp'];
+		  	var o_junjia:Number=hd.item['o_junjia'];
+		  	var o_xianshou:String=hd.item['o_newvol'];
+			var o_zhangfu:String = Number(hd.item['o_zhangfu']).toFixed(3);
+			var o_zhangdie:String = (Number(o_xianjia) - _pre_other).toFixed(3);
+			var o_color:String = (Number(o_xianjia) >= _pre_other)? '#FF0000' : '#42790B';		
+  
+		  	var date:String=hd.item['time'].toString();
+			var shijian:String = date;
+			if(date.length == 10){
+				var xiaoshi:String = date.substr(6,2);
+				var fenzhong:String= date.substr(8,2);
+				shijian = xiaoshi + ':' +fenzhong;
+			}else if(date.length == 14){
+				shijian = date.substr(9, 5);
+			}else{
+				shijian = date;
+			}
+			
+			if(hd.contextColor==0xFF9900){
+		  		return "<FONT SIZE='12'><b>"+_codeName+"</b><br><B>时间：</B>"+shijian+"<br><B>成交</B>：</FONT><FONT SIZE='12' COLOR='"+color+"'>"+xianjia.toFixed(3)+"</FONT><br><FONT SIZE='12'><B>均价：</B></FONT><FONT SIZE='12' COLOR='"+color+"'>"+junjia.toFixed(3)+"</FONT><br><FONT SIZE='12'><B>涨跌：</B></FONT><FONT SIZE='12' COLOR='"+color+"'>"+zhangdie +"</FONT><br><FONT SIZE='12'><B>涨幅：</B></FONT><FONT SIZE='12' COLOR='"+color+"'>"+zhangfu+"%</FONT><br><FONT SIZE='12'><B>现手：</B></FONT><FONT SIZE='12' COLOR='"+color+"'>"+xianshou+"</FONT>";
+			}else{
+		  		return "<FONT SIZE='12'><b>"+_codeName_other+"</b><br><B>时间：</B>"+shijian+"<br><B>成交</B>：</FONT><FONT SIZE='12' COLOR='"+o_color+"'>"+o_xianjia.toFixed(3)+"</FONT><br><FONT SIZE='12'><B>均价：</B></FONT><FONT SIZE='12' COLOR='"+o_color+"'>"+o_junjia.toFixed(3)+"</FONT><br><FONT SIZE='12'><B>涨跌：</B></FONT><FONT SIZE='12' COLOR='"+o_color+"'>"+o_zhangdie +"</FONT><br><FONT SIZE='12'><B>涨幅：</B></FONT><FONT SIZE='12' COLOR='"+o_color+"'>"+o_zhangfu+"%</FONT><br><FONT SIZE='12'><B>现手：</B></FONT><FONT SIZE='12' COLOR='"+o_color+"'>"+o_xianshou+"</FONT>";
+			}
+		}
+		
+		[Bindable(event="styleChanged")]
+		private function getcolor(name:String):*
+		{
+			return StyleManager.getStyleDeclaration(name).getStyle('color');
+		}
+		public function resetStyle():void
+		{
+			dispatchEvent(new Event("styleChanged"));
+		}
+		
+		//格式化分钟线百分比纵轴
+		private function percentLabel(item:Object, prevValue:Object, axis:IAxis):String {
+            return Number(item).toFixed(1)+'%';
+  		}
+  		
+  		//格式化价格
+		private function priceLabel(item:Object, prevValue:Object, axis:IAxis):String {
+            return Number(item).toFixed(_fix);
+  		}
+	]]>
+</mx:Script>
+<mx:LineChart id="minuteLinechart" styleName="minuteLinechart" seriesFilters="[]" gutterLeft="40" showDataTips="true" dataTipMode="multiple" height="100%" width="100%" left="0" dataTipFunction="MinuteTip" dataProvider="{_minuteList}" > 
+<mx:horizontalAxis>
+    <mx:CategoryAxis id="horAxis" dataProvider="{_xdata}"  />
+</mx:horizontalAxis>
+<mx:horizontalAxisRenderer>
+	<mx:AxisRenderer showLabels="false" tickPlacement="none">
+		<mx:axisStroke>
+    		<mx:Stroke weight="1" color="{getcolor('.minuteStroke1')}" caps="none" />
+    	</mx:axisStroke>
+	</mx:AxisRenderer>
+</mx:horizontalAxisRenderer>
+
+<mx:verticalAxis>
+    <mx:LinearAxis  minimum="{_percentMin}" maximum="{_percentMax}" id="percentAxis"  labelFunction="percentLabel"/>
+</mx:verticalAxis>
+  
+<mx:verticalAxisRenderer>
+    <com:MinuteAxisRender tickPlacement="none" id="minuteAxisRender">
+    	<com:axisStroke>
+    		<mx:Stroke weight="1" color="{getcolor('.minuteStroke3')}" caps="none" />
+    	</com:axisStroke>
+    </com:MinuteAxisRender>
+</mx:verticalAxisRenderer>
+
+<mx:series>
+	<mx:LineSeries displayName="{_legendItem1}" yField="zhangfu" id="horSeries"  radius="0">
+		<mx:lineStroke>
+			<mx:Stroke weight="1" color="#FF9900"  />
+		</mx:lineStroke>
+	</mx:LineSeries>
+	<mx:LineSeries displayName="{_legendItem2}" yField="o_zhangfu" >
+		<mx:lineStroke>
+			<mx:Stroke weight="1" color="#0099CC"  />
+		</mx:lineStroke>
+	</mx:LineSeries>
+</mx:series>
+
+<mx:backgroundElements>
+    <mx:Array>
+        <com:DotGridLines id="minuteGridLine" direction="both" horizontalChangeCount="12" verticalChangeCount="30" midbold="true">
+            <com:horizontalStroke>
+                <mx:Stroke weight="0"  color="{getcolor('.minuteStroke7')}" alpha="0.5"/>
+            </com:horizontalStroke>
+            <com:verticalStroke>
+                <mx:Stroke weight="0"  color="{getcolor('.minuteStroke8')}" alpha="0.5"/>
+            </com:verticalStroke>
+        </com:DotGridLines>
+    </mx:Array>
+</mx:backgroundElements>
+
+<mx:annotationElements>
+	<mx:Canvas id="linesCanvas" horizontalScrollPolicy="off" verticalScrollPolicy="off"  />
+</mx:annotationElements>
+	</mx:LineChart>
+<mx:Legend direction="horizontal" dataProvider="{minuteLinechart}" legendItemClass="com.BigFontLegendItem"/>
+</mx:VBox>
